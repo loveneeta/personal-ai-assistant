@@ -32,3 +32,6 @@ data object MemoryNavKey : NavKey
 
 @Serializable
 data object ChatNavKey : NavKey
+
+@Serializable
+data object VoiceDiagnosticsNavKey : NavKey

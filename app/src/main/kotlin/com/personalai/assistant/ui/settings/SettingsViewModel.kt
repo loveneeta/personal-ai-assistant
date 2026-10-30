@@ -7,15 +7,19 @@ import com.personalai.assistant.ai.DailySummarySynthesizer
 import com.personalai.assistant.backup.BackupManager
 import com.personalai.assistant.backup.BackupResult
 import com.personalai.assistant.data.local.entity.NoteEntity
+import com.personalai.assistant.data.local.entity.WakeEventEntity
 import com.personalai.assistant.data.repository.AppRepository
 import com.personalai.assistant.export.ExportManager
 import com.personalai.assistant.retention.AudioRetentionPolicy
 import com.personalai.assistant.retention.RetentionManager
+import com.personalai.assistant.wakeword.SpeakerProfileManager
 import com.personalai.assistant.worker.DailySummaryWorker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -34,6 +38,8 @@ class SettingsViewModel(
     private val context: Context
 ) : ViewModel() {
 
+    private val speakerManager = SpeakerProfileManager.getInstance(context)
+
     private val _storageStats = MutableStateFlow(StorageStats())
     val storageStats: StateFlow<StorageStats> = _storageStats.asStateFlow()
 
@@ -46,10 +52,38 @@ class SettingsViewModel(
     private val _operationStatus = MutableStateFlow<String?>(null)
     val operationStatus: StateFlow<String?> = _operationStatus.asStateFlow()
 
+    val wakeEvents: StateFlow<List<WakeEventEntity>> =
+        repository.getRecentWakeEventsFlow(20)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val isSpeakerEnrolled: StateFlow<Boolean> = speakerManager.isEnrolled
+    val isSpeakerVerificationEnabled: StateFlow<Boolean> = speakerManager.isSpeakerVerificationEnabled
+
+    // Wake word settings
+    val wakeWord = MutableStateFlow("Jarvis")
+    val wakeSensitivity = MutableStateFlow(0.70f)
+    val commandTimeoutSeconds = MutableStateFlow(6)
+    val rawAudioRetention = MutableStateFlow(false)
+
     init {
         refreshStorageStats()
         // Ensure daily summary is scheduled
         DailySummaryWorker.schedule(context)
+    }
+
+    fun toggleSpeakerVerification(enabled: Boolean) {
+        speakerManager.setVerificationEnabled(enabled)
+    }
+
+    fun deleteSpeakerProfile() {
+        speakerManager.deleteProfile()
+    }
+
+    fun clearWakeEvents() {
+        viewModelScope.launch {
+            repository.clearWakeEvents()
+            _operationStatus.value = "Wake event history cleared."
+        }
     }
 
     fun refreshStorageStats() {
@@ -112,13 +146,24 @@ class SettingsViewModel(
                     todayNotes = todayNotes
                 )
 
-                repository.insertNote(
-                    NoteEntity(
-                        title = report.title,
-                        content = report.markdownContent,
-                        isPinned = true
+                // Prevent duplicate daily summary notes
+                val existingNote = allNotes.firstOrNull { it.title == report.title }
+                if (existingNote != null) {
+                    repository.updateNote(
+                        existingNote.copy(
+                            content = report.markdownContent,
+                            updatedAt = System.currentTimeMillis()
+                        )
                     )
-                )
+                } else {
+                    repository.insertNote(
+                        NoteEntity(
+                            title = report.title,
+                            content = report.markdownContent,
+                            isPinned = true
+                        )
+                    )
+                }
 
                 _operationStatus.value = "Daily summary synthesized and saved to Notes!"
                 onComplete(report.markdownContent)

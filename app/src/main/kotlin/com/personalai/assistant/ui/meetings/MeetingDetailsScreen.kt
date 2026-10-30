@@ -1,7 +1,11 @@
 package com.personalai.assistant.ui.meetings
 
 import android.widget.Toast
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,6 +17,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -21,16 +27,17 @@ import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -42,12 +49,30 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.personalai.assistant.data.local.entity.TaskEntity
+import com.personalai.assistant.ui.components.JarvisGlassCard
 import com.personalai.assistant.ui.home.formatMs
+import com.personalai.assistant.ui.theme.JarvisBorderCyan
+import com.personalai.assistant.ui.theme.JarvisBorderViolet
+import com.personalai.assistant.ui.theme.JarvisCosmicBlack
+import com.personalai.assistant.ui.theme.JarvisCyan
+import com.personalai.assistant.ui.theme.JarvisDeepNavy
+import com.personalai.assistant.ui.theme.JarvisIceBlue
+import com.personalai.assistant.ui.theme.JarvisNeonViolet
+import com.personalai.assistant.ui.theme.JarvisSurfaceDark
+import com.personalai.assistant.ui.theme.JarvisSurfaceGlass
+import com.personalai.assistant.ui.theme.JarvisTextMuted
+import com.personalai.assistant.ui.theme.JarvisTextPrimary
+import com.personalai.assistant.ui.theme.JarvisTextSecondary
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -71,59 +96,100 @@ fun MeetingDetailsScreen(
     var showDeleteDialog by remember { mutableStateOf(false) }
 
     Scaffold(
+        containerColor = JarvisCosmicBlack,
         topBar = {
             TopAppBar(
-                title = { Text(meeting?.title ?: "Meeting Minutes") },
+                title = {
+                    Column {
+                        Text(
+                            meeting?.title ?: "MEETING DOSSIER",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = JarvisTextPrimary,
+                            maxLines = 1
+                        )
+                        Text(
+                            "DEBRIEF & ACTION LOG",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = JarvisCyan,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 9.sp,
+                            letterSpacing = 1.sp
+                        )
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = JarvisCyan
+                        )
                     }
                 },
                 actions = {
                     IconButton(onClick = { viewModel.shareMeeting(context) }) {
-                        Icon(Icons.Default.Share, contentDescription = "Share")
+                        Icon(Icons.Default.Share, contentDescription = "Share", tint = JarvisIceBlue)
                     }
                     IconButton(onClick = { showDeleteDialog = true }) {
-                        Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
+                        Icon(
+                            Icons.Default.Delete,
+                            contentDescription = "Delete",
+                            tint = MaterialTheme.colorScheme.error
+                        )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    containerColor = JarvisDeepNavy.copy(alpha = 0.95f),
+                    titleContentColor = JarvisTextPrimary
                 )
             )
         }
     ) { innerPadding ->
         val m = meeting
         if (m == null) {
-            Column(
+            Box(
                 modifier = modifier
                     .fillMaxSize()
                     .padding(innerPadding),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally
+                contentAlignment = Alignment.Center
             ) {
-                Text("Loading meeting...")
+                Text(
+                    "INITIALIZING DOSSIER...",
+                    color = JarvisCyan,
+                    fontFamily = FontFamily.Monospace,
+                    letterSpacing = 1.sp
+                )
             }
         } else {
             LazyColumn(
                 modifier = modifier
                     .fillMaxSize()
                     .padding(innerPadding)
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                JarvisDeepNavy.copy(alpha = 0.4f),
+                                JarvisCosmicBlack
+                            )
+                        )
+                    )
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 // Header & Date Card
                 item {
-                    Card(
+                    JarvisGlassCard(
                         modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                        glowColor = JarvisCyan,
+                        borderColor = JarvisBorderCyan
                     ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
+                        Column(modifier = Modifier.padding(18.dp)) {
                             Text(
                                 m.title,
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                                color = JarvisTextPrimary
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             val dateStr = SimpleDateFormat("EEEE, MMMM d, yyyy • h:mm a", Locale.getDefault())
@@ -131,33 +197,64 @@ fun MeetingDetailsScreen(
                             Text(
                                 dateStr,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                                color = JarvisIceBlue,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp
                             )
 
-                            Spacer(modifier = Modifier.height(12.dp))
+                            Spacer(modifier = Modifier.height(14.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                FilledTonalButton(
-                                    onClick = {
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = JarvisSurfaceGlass,
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, JarvisBorderCyan),
+                                    modifier = Modifier.clickable {
                                         val f = viewModel.exportPdf(context)
                                         if (f != null) {
                                             Toast.makeText(context, "Exported PDF to ${f.name}", Toast.LENGTH_SHORT).show()
                                         }
                                     }
                                 ) {
-                                    Icon(Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("PDF")
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            Icons.Default.PictureAsPdf,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp),
+                                            tint = JarvisCyan
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            "EXPORT PDF",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = JarvisCyan,
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                    }
                                 }
 
-                                FilledTonalButton(
-                                    onClick = {
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = JarvisSurfaceGlass,
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, JarvisBorderCyan),
+                                    modifier = Modifier.clickable {
                                         val f = viewModel.exportMarkdown(context)
                                         if (f != null) {
                                             Toast.makeText(context, "Exported Markdown to ${f.name}", Toast.LENGTH_SHORT).show()
                                         }
                                     }
                                 ) {
-                                    Text("Markdown")
+                                    Text(
+                                        "MARKDOWN",
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = JarvisIceBlue,
+                                        fontFamily = FontFamily.Monospace
+                                    )
                                 }
                             }
                         }
@@ -166,22 +263,26 @@ fun MeetingDetailsScreen(
 
                 // Executive Summary Card
                 item {
-                    Card(
+                    JarvisGlassCard(
                         modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                        glowColor = JarvisNeonViolet,
+                        borderColor = JarvisBorderViolet.copy(alpha = 0.6f)
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
                             Text(
-                                "Executive Summary",
-                                style = MaterialTheme.typography.titleMedium,
+                                "EXECUTIVE SUMMARY",
+                                style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
+                                color = JarvisCyan,
+                                fontFamily = FontFamily.Monospace,
+                                letterSpacing = 1.sp
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
                                 m.summary ?: "No executive summary available.",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurface
+                                color = JarvisTextPrimary,
+                                lineHeight = 20.sp
                             )
                         }
                     }
@@ -195,12 +296,15 @@ fun MeetingDetailsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            "Action Items (${tasks.size})",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
+                            "ASSIGNED PROTOCOLS (${tasks.size})",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = JarvisIceBlue,
+                            fontFamily = FontFamily.Monospace,
+                            letterSpacing = 1.sp
                         )
                         IconButton(onClick = { showAddTaskDialog = true }) {
-                            Icon(Icons.Default.Add, contentDescription = "Add Task")
+                            Icon(Icons.Default.Add, contentDescription = "Add Task", tint = JarvisCyan)
                         }
                     }
                 }
@@ -209,38 +313,47 @@ fun MeetingDetailsScreen(
                     item {
                         Text(
                             "No action items assigned for this meeting.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            style = MaterialTheme.typography.bodySmall,
+                            color = JarvisTextMuted
                         )
                     }
                 } else {
-                    items(tasks) { task ->
-                        Card(
+                    items(tasks, key = { it.id }) { task ->
+                        JarvisGlassCard(
                             modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                            glowColor = JarvisCyan,
+                            borderColor = JarvisBorderCyan.copy(alpha = 0.4f)
                         ) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(8.dp),
+                                    .padding(10.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Checkbox(
                                     checked = task.status == "COMPLETED",
-                                    onCheckedChange = { viewModel.toggleTaskStatus(task.id, task.status) }
+                                    onCheckedChange = { viewModel.toggleTaskStatus(task.id, task.status) },
+                                    colors = CheckboxDefaults.colors(
+                                        checkedColor = JarvisCyan,
+                                        checkmarkColor = JarvisCosmicBlack,
+                                        uncheckedColor = JarvisBorderCyan
+                                    )
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
                                         task.title,
                                         style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.SemiBold
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = if (task.status == "COMPLETED") JarvisTextMuted else JarvisTextPrimary
                                     )
                                     if (!task.assignedPerson.isNullOrBlank()) {
                                         Text(
                                             "Assigned: ${task.assignedPerson}",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.primary
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = JarvisCyan,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 11.sp
                                         )
                                     }
                                 }
@@ -253,30 +366,42 @@ fun MeetingDetailsScreen(
                 if (transcripts.isNotEmpty()) {
                     item {
                         Text(
-                            "Spoken Segments (${transcripts.size})",
-                            style = MaterialTheme.typography.titleMedium,
+                            "AUDIO TRANSCRIPTION TELEMETRY (${transcripts.size})",
+                            style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
+                            color = JarvisIceBlue,
+                            fontFamily = FontFamily.Monospace,
+                            letterSpacing = 1.sp,
                             modifier = Modifier.padding(top = 8.dp)
                         )
                     }
 
                     items(transcripts) { tr ->
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = JarvisSurfaceGlass,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, JarvisBorderCyan.copy(alpha = 0.3f)),
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            Row(modifier = Modifier.padding(12.dp)) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.Top
+                            ) {
                                 Text(
                                     formatMs(tr.startOffsetMs),
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary,
+                                    color = JarvisCyan,
                                     fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.width(50.dp)
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 10.sp,
+                                    modifier = Modifier.width(55.dp)
                                 )
                                 Text(
                                     tr.text,
                                     style = MaterialTheme.typography.bodySmall,
-                                    modifier = Modifier.weight(1f)
+                                    color = JarvisTextPrimary,
+                                    modifier = Modifier.weight(1f),
+                                    lineHeight = 18.sp
                                 )
                             }
                         }
@@ -289,22 +414,47 @@ fun MeetingDetailsScreen(
     if (showAddTaskDialog) {
         AlertDialog(
             onDismissRequest = { showAddTaskDialog = false },
-            title = { Text("Add Action Item") },
+            containerColor = JarvisSurfaceDark,
+            title = {
+                Text(
+                    "ADD ACTION PROTOCOL",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = JarvisTextPrimary,
+                    letterSpacing = 1.sp
+                )
+            },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
                         value = newTaskTitle,
                         onValueChange = { newTaskTitle = it },
-                        label = { Text("Task Description") },
+                        label = { Text("Task Description", color = JarvisTextSecondary) },
                         singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = JarvisTextPrimary,
+                            unfocusedTextColor = JarvisTextPrimary,
+                            focusedBorderColor = JarvisCyan,
+                            unfocusedBorderColor = JarvisBorderCyan,
+                            focusedContainerColor = JarvisCosmicBlack,
+                            unfocusedContainerColor = JarvisCosmicBlack
+                        )
                     )
                     OutlinedTextField(
                         value = newTaskAssignee,
                         onValueChange = { newTaskAssignee = it },
-                        label = { Text("Assignee (Optional)") },
+                        label = { Text("Assignee (Optional)", color = JarvisTextSecondary) },
                         singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = JarvisTextPrimary,
+                            unfocusedTextColor = JarvisTextPrimary,
+                            focusedBorderColor = JarvisCyan,
+                            unfocusedBorderColor = JarvisBorderCyan,
+                            focusedContainerColor = JarvisCosmicBlack,
+                            unfocusedContainerColor = JarvisCosmicBlack
+                        )
                     )
                 }
             },
@@ -317,14 +467,15 @@ fun MeetingDetailsScreen(
                             newTaskAssignee = ""
                             showAddTaskDialog = false
                         }
-                    }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = JarvisCyan, contentColor = JarvisCosmicBlack)
                 ) {
-                    Text("Add")
+                    Text("Add", fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showAddTaskDialog = false }) {
-                    Text("Cancel")
+                    Text("Cancel", color = JarvisTextSecondary)
                 }
             }
         )
@@ -333,8 +484,22 @@ fun MeetingDetailsScreen(
     if (showDeleteDialog) {
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
-            title = { Text("Delete Meeting Minutes?") },
-            text = { Text("This will remove this meeting record and its generated minutes. Linked recordings will remain intact.") },
+            containerColor = JarvisSurfaceDark,
+            title = {
+                Text(
+                    "PURGE MEETING MINUTES?",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = JarvisTextPrimary,
+                    letterSpacing = 1.sp
+                )
+            },
+            text = {
+                Text(
+                    "This will remove this meeting record and its generated minutes. Linked recordings will remain intact.",
+                    color = JarvisTextSecondary
+                )
+            },
             confirmButton = {
                 Button(
                     onClick = {
@@ -342,14 +507,15 @@ fun MeetingDetailsScreen(
                             showDeleteDialog = false
                             onNavigateBack()
                         }
-                    }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                 ) {
-                    Text("Delete")
+                    Text("Purge")
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showDeleteDialog = false }) {
-                    Text("Cancel")
+                    Text("Cancel", color = JarvisTextSecondary)
                 }
             }
         )

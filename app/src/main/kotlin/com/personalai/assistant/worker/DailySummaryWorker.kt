@@ -54,14 +54,24 @@ class DailySummaryWorker(
                 todayNotes = todayNotes
             )
 
-            // Save report as a Note in Room
-            repository.insertNote(
-                NoteEntity(
-                    title = report.title,
-                    content = report.markdownContent,
-                    isPinned = true
+            // Prevent duplicate daily summary notes by updating existing today's summary or inserting
+            val existingNote = allNotes.firstOrNull { it.title == report.title }
+            if (existingNote != null) {
+                repository.updateNote(
+                    existingNote.copy(
+                        content = report.markdownContent,
+                        updatedAt = System.currentTimeMillis()
+                    )
                 )
-            )
+            } else {
+                repository.insertNote(
+                    NoteEntity(
+                        title = report.title,
+                        content = report.markdownContent,
+                        isPinned = true
+                    )
+                )
+            }
 
             // Show notification if there was activity today
             if (todayRecordings.isNotEmpty() || todayMeetings.isNotEmpty() || allTasks.isNotEmpty()) {

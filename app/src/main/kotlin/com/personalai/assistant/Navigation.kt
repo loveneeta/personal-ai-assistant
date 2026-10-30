@@ -44,7 +44,7 @@ fun MainNavigation() {
         entryProvider = entryProvider {
             entry<HomeNavKey> {
                 val homeViewModel: HomeViewModel = viewModel {
-                    HomeViewModel(repository, modelManager)
+                    HomeViewModel(repository, modelManager, com.personalai.assistant.transcription.GoogleVoiceRecognitionManager.getInstance(context))
                 }
                 HomeScreen(
                     viewModel = homeViewModel,
@@ -54,7 +54,8 @@ fun MainNavigation() {
                     onNavigateToMeetings = { backStack.add(MeetingsNavKey) },
                     onNavigateToTasks = { backStack.add(TasksNavKey) },
                     onNavigateToMemory = { backStack.add(MemoryNavKey) },
-                    onNavigateToChat = { backStack.add(ChatNavKey) }
+                    onNavigateToChat = { backStack.add(ChatNavKey) },
+                    onNavigateToDiagnostics = { backStack.add(VoiceDiagnosticsNavKey) }
                 )
             }
 
@@ -153,6 +154,16 @@ fun MainNavigation() {
                 }
                 ModelsScreen(
                     viewModel = modelsViewModel,
+                    onNavigateBack = { backStack.removeLastOrNull() }
+                )
+            }
+
+            entry<VoiceDiagnosticsNavKey> {
+                val diagViewModel: com.personalai.assistant.ui.diagnostics.VoiceDiagnosticsViewModel = viewModel {
+                    com.personalai.assistant.ui.diagnostics.VoiceDiagnosticsViewModel(context, modelManager)
+                }
+                com.personalai.assistant.ui.diagnostics.VoiceDiagnosticsScreen(
+                    viewModel = diagViewModel,
                     onNavigateBack = { backStack.removeLastOrNull() }
                 )
             }

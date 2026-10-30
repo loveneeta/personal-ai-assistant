@@ -22,9 +22,9 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Hearing
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Warning
@@ -56,10 +56,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.personalai.assistant.data.local.entity.TranscriptEntity
 import com.personalai.assistant.transcription.TranscriptionProgress
 import com.personalai.assistant.ui.home.formatMs
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -90,23 +92,36 @@ fun RecordingDetailsScreen(
     var editedSegmentText by remember { mutableStateOf("") }
 
     Scaffold(
+        containerColor = com.personalai.assistant.ui.theme.JarvisCosmicBlack,
         topBar = {
             TopAppBar(
-                title = { Text(recording?.title ?: "Recording Details") },
+                title = { 
+                    androidx.compose.foundation.layout.Column {
+                        Text(recording?.title ?: "Recording Dossier", color = com.personalai.assistant.ui.theme.JarvisTextPrimary, maxLines = 1)
+                        Text(
+                            "ACOUSTIC & TRANSCRIPTION TELEMETRY",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = com.personalai.assistant.ui.theme.JarvisCyan,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            fontSize = 9.sp,
+                            letterSpacing = 1.sp
+                        )
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = com.personalai.assistant.ui.theme.JarvisCyan)
                     }
                 },
                 actions = {
                     IconButton(onClick = { viewModel.shareJson(context) }) {
-                        Icon(Icons.Default.Share, contentDescription = "Share JSON")
+                        Icon(Icons.Default.Share, contentDescription = "Share JSON", tint = com.personalai.assistant.ui.theme.JarvisIceBlue)
                     }
                     IconButton(onClick = {
                         renameText = recording?.title ?: ""
                         showRenameDialog = true
                     }) {
-                        Icon(Icons.Default.Edit, contentDescription = "Rename")
+                        Icon(Icons.Default.Edit, contentDescription = "Rename", tint = com.personalai.assistant.ui.theme.JarvisCyan)
                     }
                     IconButton(onClick = { showDeleteDialog = true }) {
                         Icon(
@@ -117,7 +132,8 @@ fun RecordingDetailsScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    containerColor = com.personalai.assistant.ui.theme.JarvisDeepNavy.copy(alpha = 0.95f),
+                    titleContentColor = com.personalai.assistant.ui.theme.JarvisTextPrimary
                 )
             )
         }
@@ -145,175 +161,223 @@ fun RecordingDetailsScreen(
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // Audio Player Card
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer
-                    )
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(20.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                // Audio Player or Google Voice Session Card
+                val isGoogleVoiceSession = rec.filePath.startsWith("[")
+                if (!isGoogleVoiceSession) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer
+                        )
                     ) {
-                        Text(
-                            "Audio Playback",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        val totalDuration = if (playerDurationMs > 0) playerDurationMs.toLong() else rec.durationMs
-                        val sliderValue = if (totalDuration > 0) {
-                            (currentPosMs.toFloat() / totalDuration.toFloat()).coerceIn(0f, 1f)
-                        } else 0f
-
-                        Slider(
-                            value = sliderValue,
-                            onValueChange = { frac ->
-                                val target = (frac * totalDuration).toInt()
-                                viewModel.seekTo(target)
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        )
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(20.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Text(
-                                formatMs(currentPosMs.toLong()),
-                                style = MaterialTheme.typography.bodySmall,
+                                "Audio Playback",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer
                             )
-                            Text(
-                                formatMs(totalDuration),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            val totalDuration = if (playerDurationMs > 0) playerDurationMs.toLong() else rec.durationMs
+                            val sliderValue = if (totalDuration > 0) {
+                                (currentPosMs.toFloat() / totalDuration.toFloat()).coerceIn(0f, 1f)
+                            } else 0f
+
+                            Slider(
+                                value = sliderValue,
+                                onValueChange = { frac ->
+                                    val target = (frac * totalDuration).toInt()
+                                    viewModel.seekTo(target)
+                                },
+                                modifier = Modifier.fillMaxWidth()
                             )
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    formatMs(currentPosMs.toLong()),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                                Text(
+                                    formatMs(totalDuration),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(16.dp))
+
+                            Button(
+                                onClick = {
+                                    if (isPlaying) {
+                                        viewModel.pause()
+                                    } else {
+                                        viewModel.play()
+                                    }
+                                },
+                                shape = CircleShape,
+                                modifier = Modifier.size(64.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    contentDescription = if (isPlaying) "Pause" else "Play",
+                                    modifier = Modifier.size(32.dp)
+                                )
+                            }
                         }
-
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        Button(
-                            onClick = {
-                                if (isPlaying) {
-                                    viewModel.pause()
-                                } else {
-                                    viewModel.play()
-                                }
-                            },
-                            shape = CircleShape,
-                            modifier = Modifier.size(64.dp)
+                    }
+                } else {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(18.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(
-                                imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                contentDescription = if (isPlaying) "Pause" else "Play",
-                                modifier = Modifier.size(32.dp)
+                                Icons.Default.RecordVoiceOver,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(36.dp)
                             )
+                            Spacer(modifier = Modifier.width(14.dp))
+                            Column {
+                                Text(
+                                    "Google Voice Dictation Session",
+                                    fontWeight = FontWeight.Bold,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    "Dictated live with real-time word readout and whole-sentence completion. Full transcripts verified below.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
                         }
                     }
                 }
 
-                // Transcription & STT Status Card
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    )
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    Icons.Default.Hearing,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    "On-Device Transcription",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        // Quick Retranscription Options
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            FilledTonalButton(
-                                onClick = { viewModel.reprocessTranscription("vosk-model-small-hi-0.22") },
-                                modifier = Modifier.weight(1f)
+                // Transcription & STT Status Card (for WAV files)
+                if (!isGoogleVoiceSession) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("🇮🇳 Transcribe in Hindi")
-                            }
-                            FilledTonalButton(
-                                onClick = { viewModel.reprocessTranscription("vosk-model-small-en-in-0.4") },
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text("🌐 Indian English")
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        // Live progress state
-                        val prog = queueProgress
-                        if (prog is TranscriptionProgress.Processing && prog.recordingId == rec.id) {
-                            LinearProgressIndicator(
-                                progress = { prog.progress },
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                prog.statusText,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        } else {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("Status: ", style = MaterialTheme.typography.bodyMedium)
-                                Surface(
-                                    shape = RoundedCornerShape(4.dp),
-                                    color = when (rec.processingStatus) {
-                                        "COMPLETED" -> MaterialTheme.colorScheme.primaryContainer
-                                        "PROCESSING" -> MaterialTheme.colorScheme.tertiaryContainer
-                                        "FAILED" -> MaterialTheme.colorScheme.errorContainer
-                                        else -> MaterialTheme.colorScheme.surfaceVariant
-                                    }
-                                ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        Icons.Default.Hearing,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        rec.processingStatus,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                        style = MaterialTheme.typography.labelSmall,
+                                        "Whole-Sentence AI Transcription",
+                                        style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.Bold
                                     )
                                 }
                             }
 
-                            if (rec.processingStatus == "FAILED") {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                "Multi-pass whole sentence reconstruction with intelligent pause boundary smoothing (no chopped fragments).",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            // Quick Retranscription Options
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                FilledTonalButton(
+                                    onClick = { viewModel.reprocessTranscription("vosk-model-small-hi-0.22") },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text("🇮🇳 Retranscribe (Hindi)")
+                                }
+                                FilledTonalButton(
+                                    onClick = { viewModel.reprocessTranscription("vosk-model-small-en-in-0.4") },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text("🌐 Hinglish / Indian English")
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            // Live progress state
+                            val prog = queueProgress
+                            if (prog is TranscriptionProgress.Processing && prog.recordingId == rec.id) {
+                                LinearProgressIndicator(
+                                    progress = { prog.progress },
+                                    modifier = Modifier.fillMaxWidth()
+                                )
                                 Spacer(modifier = Modifier.height(6.dp))
                                 Text(
-                                    rec.errorDetails ?: "Transcription failed. Ensure a speech model is downloaded.",
+                                    prog.statusText,
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.error
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.SemiBold
                                 )
-                                Spacer(modifier = Modifier.height(8.dp))
-                                OutlinedButton(onClick = onNavigateToModels) {
-                                    Text("Manage Speech Models")
+                            } else {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Status: ", style = MaterialTheme.typography.bodyMedium)
+                                    Surface(
+                                        shape = RoundedCornerShape(4.dp),
+                                        color = when (rec.processingStatus) {
+                                            "COMPLETED" -> MaterialTheme.colorScheme.primaryContainer
+                                            "PROCESSING" -> MaterialTheme.colorScheme.tertiaryContainer
+                                            "FAILED" -> MaterialTheme.colorScheme.errorContainer
+                                            else -> MaterialTheme.colorScheme.surfaceVariant
+                                        }
+                                    ) {
+                                        Text(
+                                            rec.processingStatus,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+
+                                if (rec.processingStatus == "FAILED") {
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        rec.errorDetails ?: "Transcription failed. Ensure a speech model is downloaded.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    OutlinedButton(onClick = onNavigateToModels) {
+                                        Text("Manage Speech Models")
+                                    }
                                 }
                             }
                         }
@@ -367,7 +431,7 @@ fun RecordingDetailsScreen(
                 // Transcripts Segments Section
                 if (transcripts.isNotEmpty()) {
                     Text(
-                        "Transcript (${transcripts.size} segments)",
+                        "Complete Sentences Transcript (${transcripts.size} sentences)",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
@@ -386,7 +450,7 @@ fun RecordingDetailsScreen(
                     }
                 } else if (rec.processingStatus == "COMPLETED") {
                     Text(
-                        "No spoken segments were extracted from this recording.",
+                        "No spoken segments were extracted from this session.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -403,13 +467,13 @@ fun RecordingDetailsScreen(
                     Column(modifier = Modifier.padding(16.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
-                                imageVector = if (integrityStatus.startsWith("Valid")) Icons.Default.CheckCircle else Icons.Default.Warning,
+                                imageVector = if (integrityStatus.startsWith("Valid") || integrityStatus.startsWith("Verified")) Icons.Default.CheckCircle else Icons.Default.Warning,
                                 contentDescription = null,
-                                tint = if (integrityStatus.startsWith("Valid")) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                                tint = if (integrityStatus.startsWith("Valid") || integrityStatus.startsWith("Verified")) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                "File Integrity Verification",
+                                "Session Verification",
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold
                             )
@@ -444,8 +508,12 @@ fun RecordingDetailsScreen(
                             MetadataRow("End Time", dateFmt.format(Date(endTs)))
                         }
                         MetadataRow("Duration", formatMs(rec.durationMs))
-                        MetadataRow("File Size", "${rec.fileSizeBytes} bytes (${rec.fileSizeBytes / 1024} KB)")
-                        MetadataRow("Audio Specs", "16kHz 16-bit Mono PCM WAV")
+                        if (!isGoogleVoiceSession) {
+                            MetadataRow("File Size", "${rec.fileSizeBytes} bytes (${rec.fileSizeBytes / 1024} KB)")
+                            MetadataRow("Audio Specs", "16kHz 16-bit Mono PCM WAV")
+                        } else {
+                            MetadataRow("Engine", "Android Google Speech Recognition (Voice Keyboard)")
+                        }
                         MetadataRow("Status", rec.status)
                     }
                 }
@@ -456,7 +524,7 @@ fun RecordingDetailsScreen(
         segmentToEdit?.let { seg ->
             AlertDialog(
                 onDismissRequest = { segmentToEdit = null },
-                title = { Text("Edit Transcript Segment [${formatMs(seg.startOffsetMs)}]") },
+                title = { Text("Edit Sentence [${formatMs(seg.startOffsetMs)}]") },
                 text = {
                     OutlinedTextField(
                         value = editedSegmentText,

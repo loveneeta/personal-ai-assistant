@@ -1,8 +1,18 @@
 package com.personalai.assistant.recording
 
 import java.io.File
-import java.io.FileOutputStream
+import java.io.OutputStream
 import java.io.RandomAccessFile
+
+data class WavValidationResult(
+    val isValid: Boolean,
+    val sampleRate: Int = 0,
+    val channels: Int = 0,
+    val bitsPerSample: Int = 0,
+    val audioDataBytes: Long = 0L,
+    val durationMs: Long = 0L,
+    val errorMessage: String? = null
+)
 
 object WavWriter {
     const val SAMPLE_RATE = 16000
@@ -10,7 +20,7 @@ object WavWriter {
     const val BITS_PER_SAMPLE = 16
     const val BYTES_PER_SECOND = SAMPLE_RATE * CHANNELS * (BITS_PER_SAMPLE / 8) // 32000
 
-    fun writeWavHeader(out: FileOutputStream, totalAudioBytes: Long = 0) {
+    fun writeWavHeader(out: OutputStream, totalAudioBytes: Long = 0) {
         val totalDataLen = totalAudioBytes + 36
         val byteRate = BYTES_PER_SECOND
         val blockAlign = CHANNELS * (BITS_PER_SAMPLE / 8)
@@ -99,5 +109,93 @@ object WavWriter {
                 )
             )
         }
+    }
+
+    fun calculateDurationMs(audioBytes: Long): Long {
+        return (audioBytes.coerceAtLeast(0L) * 1000L) / BYTES_PER_SECOND
+    }
+
+    /**
+     * Inspects a WAV file on disk and verifies all structural RIFF/WAVE header invariants.
+     */
+    fun validateWavHeader(file: File): WavValidationResult {
+        if (!file.exists()) {
+            return WavValidationResult(isValid = false, errorMessage = "File does not exist: ${file.absolutePath}")
+        }
+        val fileLength = file.length()
+        if (fileLength < 44L) {
+            return WavValidationResult(isValid = false, errorMessage = "File too small for WAV header (length: $fileLength)")
+        }
+
+        return try {
+            RandomAccessFile(file, "r").use { raf ->
+                val magic = ByteArray(4)
+                raf.readFully(magic)
+                if (String(magic, Charsets.US_ASCII) != "RIFF") {
+                    return WavValidationResult(isValid = false, errorMessage = "Missing RIFF magic header")
+                }
+
+                // Chunk size
+                val riffChunkSize = Integer.reverseBytes(raf.readInt()).toLong() and 0xFFFFFFFFL
+
+                raf.seek(8)
+                val waveMagic = ByteArray(4)
+                raf.readFully(waveMagic)
+                if (String(waveMagic, Charsets.US_ASCII) != "WAVE") {
+                    return WavValidationResult(isValid = false, errorMessage = "Missing WAVE format identifier")
+                }
+
+                raf.seek(12)
+                val fmtMagic = ByteArray(4)
+                raf.readFully(fmtMagic)
+                if (String(fmtMagic, Charsets.US_ASCII) != "fmt ") {
+                    return WavValidationResult(isValid = false, errorMessage = "Missing fmt chunk")
+                }
+
+                raf.seek(20)
+                val format = java.lang.Short.reverseBytes(raf.readShort()).toInt() and 0xFFFF
+                if (format != 1) {
+                    return WavValidationResult(isValid = false, errorMessage = "Unsupported audio format: $format (expected 1 for linear PCM)")
+                }
+
+                val channels = java.lang.Short.reverseBytes(raf.readShort()).toInt() and 0xFFFF
+                val sampleRate = Integer.reverseBytes(raf.readInt())
+                raf.seek(34)
+                val bitsPerSample = java.lang.Short.reverseBytes(raf.readShort()).toInt() and 0xFFFF
+
+                raf.seek(36)
+                val dataMagic = ByteArray(4)
+                raf.readFully(dataMagic)
+                if (String(dataMagic, Charsets.US_ASCII) != "data") {
+                    return WavValidationResult(isValid = false, errorMessage = "Missing data subchunk")
+                }
+
+                val dataSize = Integer.reverseBytes(raf.readInt()).toLong() and 0xFFFFFFFFL
+                val calculatedDuration = calculateDurationMs(dataSize)
+
+                WavValidationResult(
+                    isValid = true,
+                    sampleRate = sampleRate,
+                    channels = channels,
+                    bitsPerSample = bitsPerSample,
+                    audioDataBytes = dataSize,
+                    durationMs = calculatedDuration
+                )
+            }
+        } catch (e: Exception) {
+            WavValidationResult(isValid = false, errorMessage = "Failed reading WAV header: ${e.message}")
+        }
+    }
+
+    /**
+     * Repairs an incomplete or abruptly terminated WAV file by calculating
+     * actual recorded audio payload bytes and rewriting the RIFF chunk sizes.
+     * Returns the recalculated duration in milliseconds.
+     */
+    fun repairIncompleteWav(file: File): Long {
+        if (!file.exists() || file.length() < 44L) return 0L
+        val audioBytes = (file.length() - 44L).coerceAtLeast(0L)
+        finalizeWavHeader(file, audioBytes)
+        return calculateDurationMs(audioBytes)
     }
 }

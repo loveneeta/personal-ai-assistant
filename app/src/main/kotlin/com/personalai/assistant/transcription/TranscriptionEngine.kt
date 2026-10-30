@@ -1,11 +1,12 @@
 package com.personalai.assistant.transcription
 
+import com.personalai.assistant.recording.WavWriter
 import org.json.JSONObject
 import org.vosk.Model
 import org.vosk.Recognizer
 import java.io.File
 import java.io.FileInputStream
-import java.util.Locale
+import java.io.RandomAccessFile
 
 data class TranscriptSegment(
     val startOffsetMs: Long,
@@ -17,118 +18,186 @@ data class TranscriptSegment(
 
 class VoskTranscriptionEngine {
 
+    /**
+     * Transcribes an on-device 16kHz WAV audio file into whole, completed, grammatically sound sentences.
+     *
+     * Ensures native Kaldi C++ [Model] and [Recognizer] instances are guaranteed to close under all
+     * conditions (success, exception, or coroutine cancellation).
+     */
     fun transcribe(
         audioFile: File,
         modelDir: File,
         languageCode: String = "en",
+        pauseThresholdMs: Long = SentenceReconstructor.PAUSE_THRESHOLD_BALANCED,
         onProgress: (Float) -> Unit = {}
     ): List<TranscriptSegment> {
-        if (!audioFile.exists() || audioFile.length() < 44) {
-            throw IllegalArgumentException("Audio file is missing or contains no data")
+        if (!audioFile.exists() || audioFile.length() < 44L) {
+            throw IllegalArgumentException("Audio file is missing or contains no data: ${audioFile.absolutePath}")
         }
 
-        val model = Model(modelDir.absolutePath)
-        val recognizer = Recognizer(model, 16000.0f)
-        recognizer.setWords(true)
+        // Validate WAV file format invariants
+        val validation = WavWriter.validateWavHeader(audioFile)
+        if (!validation.isValid) {
+            throw IllegalArgumentException("Invalid WAV audio format: ${validation.errorMessage}")
+        }
 
-        val segments = mutableListOf<TranscriptSegment>()
-        val totalAudioBytes = audioFile.length() - 44
-        var processedBytes: Long = 0
+        if (!modelDir.exists() || !modelDir.isDirectory) {
+            throw IllegalArgumentException("Speech model directory does not exist: ${modelDir.absolutePath}")
+        }
 
-        FileInputStream(audioFile).use { fis ->
-            // Skip 44-byte WAV header
-            fis.skip(44)
-            val buffer = ByteArray(4096)
-            var bytesRead: Int
+        var model: Model? = null
+        var recognizer: Recognizer? = null
 
-            while (fis.read(buffer).also { bytesRead = it } != -1) {
-                processedBytes += bytesRead
-                if (totalAudioBytes > 0) {
-                    onProgress((processedBytes.toFloat() / totalAudioBytes.toFloat()).coerceIn(0f, 1f))
+        val allWords = mutableListOf<WordToken>()
+
+        try {
+            model = Model(modelDir.absolutePath)
+            recognizer = Recognizer(model, 16000.0f).apply {
+                setWords(true)
+            }
+
+            val dataOffset = findAudioDataOffset(audioFile)
+            val audioDataLen = (audioFile.length() - dataOffset).coerceAtLeast(0L)
+            var processedBytes: Long = 0
+
+            FileInputStream(audioFile).use { fis ->
+                if (dataOffset > 0) {
+                    fis.skip(dataOffset)
+                }
+                val buffer = ByteArray(4096)
+                var bytesRead: Int
+
+                while (fis.read(buffer).also { bytesRead = it } != -1) {
+                    processedBytes += bytesRead
+                    if (audioDataLen > 0) {
+                        onProgress((processedBytes.toFloat() / audioDataLen.toFloat()).coerceIn(0f, 0.95f))
+                    }
+
+                    if (recognizer.acceptWaveForm(buffer, bytesRead)) {
+                        val resultJson = recognizer.result
+                        val streamTimeMs = (processedBytes * 1000L) / 32000L
+                        val words = extractWords(resultJson, streamTimeMs)
+                        appendDeduplicatedWords(allWords, words)
+                    }
                 }
 
-                if (recognizer.acceptWaveForm(buffer, bytesRead)) {
-                    val resultJson = recognizer.result
-                    val seg = parseVoskJsonResult(resultJson, languageCode)
-                    if (seg != null && seg.text.isNotBlank()) {
-                        segments.add(seg)
+                // Extract final recognition hypothesis without dropping terminal words
+                val finalJson = recognizer.finalResult
+                val finalStreamTimeMs = (processedBytes * 1000L) / 32000L
+                val finalWords = extractWords(finalJson, finalStreamTimeMs)
+                appendDeduplicatedWords(allWords, finalWords)
+            }
+
+            onProgress(0.98f)
+
+            // Reconstruct whole completed sentences with timestamp continuity
+            val completedSegments = SentenceReconstructor.reconstruct(
+                words = allWords,
+                languageCode = languageCode,
+                pauseThresholdMs = pauseThresholdMs
+            )
+
+            onProgress(1.0f)
+            return completedSegments
+
+        } finally {
+            // Guaranteed native cleanup under all circumstances (errors, exceptions, cancellations)
+            try {
+                recognizer?.close()
+            } catch (e: Exception) {
+                // ignore
+            }
+            try {
+                model?.close()
+            } catch (e: Exception) {
+                // ignore
+            }
+        }
+    }
+
+    private fun appendDeduplicatedWords(target: MutableList<WordToken>, newWords: List<WordToken>) {
+        for (w in newWords) {
+            val isDuplicate = target.isNotEmpty() &&
+                    target.last().word.equals(w.word, ignoreCase = true) &&
+                    target.last().startMs == w.startMs
+            if (!isDuplicate) {
+                // Enforce monotonic non-decreasing timestamp invariants across streaming buffers
+                val adjustedWord = if (target.isNotEmpty() && w.startMs < target.last().endMs) {
+                    val newStart = target.last().endMs + 20L
+                    val originalDuration = (w.endMs - w.startMs).coerceAtLeast(100L)
+                    w.copy(startMs = newStart, endMs = newStart + originalDuration)
+                } else {
+                    w
+                }
+                target.add(adjustedWord)
+            }
+        }
+    }
+
+    fun extractWords(jsonStr: String, currentStreamTimeMs: Long = 0L): List<WordToken> {
+        val list = mutableListOf<WordToken>()
+        try {
+            val json = JSONObject(jsonStr)
+            val wordsArray = json.optJSONArray("result")
+            if (wordsArray != null && wordsArray.length() > 0) {
+                for (i in 0 until wordsArray.length()) {
+                    val item = wordsArray.getJSONObject(i)
+                    val word = item.optString("word", "").trim()
+                    val start = (item.optDouble("start", 0.0) * 1000.0).toLong()
+                    val end = (item.optDouble("end", 0.0) * 1000.0).toLong()
+                    val conf = item.optDouble("conf", 0.95).toFloat()
+                    if (word.isNotEmpty()) {
+                        list.add(WordToken(word, start, end, conf))
+                    }
+                }
+            } else {
+                // Fallback if result array is absent but text is present - synthesize monotonic timestamps
+                val text = json.optString("text", "").trim()
+                if (text.isNotEmpty()) {
+                    val tokens = text.split("\\s+".toRegex()).filter { it.isNotBlank() }
+                    val wordDurationMs = 280L
+                    val wordGapMs = 40L
+                    val totalDuration = tokens.size * (wordDurationMs + wordGapMs)
+                    val baseStartMs = (currentStreamTimeMs - totalDuration).coerceAtLeast(0L)
+                    tokens.forEachIndexed { idx, t ->
+                        val wordStart = baseStartMs + idx * (wordDurationMs + wordGapMs)
+                        val wordEnd = wordStart + wordDurationMs
+                        list.add(WordToken(t, wordStart, wordEnd, 0.90f))
                     }
                 }
             }
-
-            // Final tail result
-            val finalJson = recognizer.finalResult
-            val finalSeg = parseVoskJsonResult(finalJson, languageCode)
-            if (finalSeg != null && finalSeg.text.isNotBlank()) {
-                segments.add(finalSeg)
-            }
+        } catch (e: Exception) {
+            // ignore malformed partial json
         }
-
-        recognizer.close()
-        model.close()
-
-        return segments
+        return list
     }
 
-    private fun parseVoskJsonResult(jsonStr: String, languageCode: String): TranscriptSegment? {
+    private fun findAudioDataOffset(file: File): Long {
         try {
-            val json = JSONObject(jsonStr)
-            val text = json.optString("text", "").trim()
-            if (text.isEmpty()) return null
-
-            var startMs = 0L
-            var endMs = 0L
-            var totalConf = 0.0
-            var wordCount = 0
-
-            val wordsArray = json.optJSONArray("result")
-            if (wordsArray != null && wordsArray.length() > 0) {
-                val firstWord = wordsArray.getJSONObject(0)
-                val lastWord = wordsArray.getJSONObject(wordsArray.length() - 1)
-
-                startMs = (firstWord.optDouble("start", 0.0) * 1000.0).toLong()
-                endMs = (lastWord.optDouble("end", 0.0) * 1000.0).toLong()
-
-                for (i in 0 until wordsArray.length()) {
-                    val w = wordsArray.getJSONObject(i)
-                    totalConf += w.optDouble("conf", 1.0)
-                    wordCount++
+            RandomAccessFile(file, "r").use { raf ->
+                if (raf.length() < 12) return 44L
+                val magic = ByteArray(4)
+                raf.readFully(magic)
+                if (String(magic, Charsets.US_ASCII) != "RIFF") return 44L
+                raf.seek(12)
+                while (raf.filePointer < raf.length() - 8) {
+                    val chunkId = ByteArray(4)
+                    raf.readFully(chunkId)
+                    val idStr = String(chunkId, Charsets.US_ASCII)
+                    val chunkSize = Integer.reverseBytes(raf.readInt()).toLong() and 0xFFFFFFFFL
+                    if (idStr == "data") {
+                        return raf.filePointer
+                    }
+                    if (chunkSize > 0 && raf.filePointer + chunkSize <= raf.length()) {
+                        raf.seek(raf.filePointer + chunkSize)
+                    } else {
+                        break
+                    }
                 }
             }
-
-            val avgConf = if (wordCount > 0) (totalConf / wordCount).toFloat() else 0.95f
-            val formattedText = formatSentence(text, languageCode)
-
-            return TranscriptSegment(
-                startOffsetMs = startMs,
-                endOffsetMs = if (endMs > startMs) endMs else startMs + 3000L,
-                text = formattedText,
-                confidence = avgConf,
-                language = languageCode
-            )
         } catch (e: Exception) {
-            e.printStackTrace()
-            return null
+            // Fallback to standard 44 bytes
         }
-    }
-
-    private fun formatSentence(raw: String, languageCode: String): String {
-        if (raw.isBlank()) return raw
-        val trimmed = raw.trim()
-        if (languageCode == "hi") {
-            return if (!trimmed.endsWith("।") && !trimmed.endsWith(".") && !trimmed.endsWith("?")) {
-                "$trimmed।"
-            } else {
-                trimmed
-            }
-        }
-        val capitalized = trimmed.replaceFirstChar {
-            if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString()
-        }
-        return if (!capitalized.endsWith(".") && !capitalized.endsWith("?") && !capitalized.endsWith("!")) {
-            "$capitalized."
-        } else {
-            capitalized
-        }
+        return 44L
     }
 }

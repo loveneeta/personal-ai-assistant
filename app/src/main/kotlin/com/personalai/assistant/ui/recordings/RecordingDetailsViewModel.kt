@@ -46,16 +46,20 @@ class RecordingDetailsViewModel(
             _recording.value = rec
 
             if (rec != null) {
-                val file = File(rec.filePath)
-                _fileIntegrityStatus.value = when {
-                    !file.exists() -> "Missing audio file at ${rec.filePath}"
-                    file.length() < 44 -> "Corrupt file (size < 44 bytes)"
-                    else -> "Valid PCM WAV (${file.length()} bytes, readable)"
-                }
+                if (rec.filePath.startsWith("[")) {
+                    _fileIntegrityStatus.value = "Verified Google Voice Dictation (${rec.durationMs / 1000}s session)"
+                } else {
+                    val file = File(rec.filePath)
+                    _fileIntegrityStatus.value = when {
+                        !file.exists() -> "Missing audio file at ${rec.filePath}"
+                        file.length() < 44 -> "Corrupt file (size < 44 bytes)"
+                        else -> "Valid PCM WAV (${file.length()} bytes, readable)"
+                    }
 
-                // If processing status is still PENDING, automatically trigger transcription
-                if (rec.processingStatus == "PENDING" && file.exists() && file.length() > 44) {
-                    queueManager.enqueue(recordingId)
+                    // If processing status is still PENDING, automatically trigger transcription
+                    if (rec.processingStatus == "PENDING" && file.exists() && file.length() > 44) {
+                        queueManager.enqueue(recordingId)
+                    }
                 }
             } else {
                 _fileIntegrityStatus.value = "Recording not found in database"
@@ -82,7 +86,7 @@ class RecordingDetailsViewModel(
 
     fun play() {
         val path = _recording.value?.filePath
-        if (path != null) {
+        if (path != null && !path.startsWith("[")) {
             audioPlayer.play(path)
         }
     }

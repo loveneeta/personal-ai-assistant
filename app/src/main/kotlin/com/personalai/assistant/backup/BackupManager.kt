@@ -7,15 +7,17 @@ import com.personalai.assistant.data.local.entity.RecordingEntity
 import com.personalai.assistant.data.local.entity.TaskEntity
 import com.personalai.assistant.data.local.entity.TranscriptEntity
 import com.personalai.assistant.data.repository.AppRepository
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
-import java.io.ByteArrayOutputStream
 import java.io.File
-import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.nio.charset.StandardCharsets
+import java.security.GeneralSecurityException
 import java.security.SecureRandom
+import javax.crypto.AEADBadTagException
 import javax.crypto.Cipher
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.GCMParameterSpec
@@ -30,24 +32,26 @@ data class BackupResult(
 
 object BackupManager {
 
+    const val BACKUP_VERSION = 2
     private const val ITERATIONS = 65536
     private const val KEY_LENGTH = 256
     private const val SALT_LENGTH = 16
     private const val IV_LENGTH = 12
     private const val TAG_LENGTH_BIT = 128
+    const val MIN_BACKUP_FILE_LENGTH = SALT_LENGTH + IV_LENGTH + 16 // 44 bytes
 
     suspend fun createEncryptedBackup(
         context: Context,
         repository: AppRepository,
         passphrase: String
-    ): BackupResult {
+    ): BackupResult = withContext(Dispatchers.IO) {
         if (passphrase.length < 6) {
-            return BackupResult(false, "Passphrase must be at least 6 characters.")
+            return@withContext BackupResult(false, "Passphrase must be at least 6 characters.")
         }
 
         try {
             val root = JSONObject()
-            root.put("version", 1)
+            root.put("version", BACKUP_VERSION)
             root.put("createdAt", System.currentTimeMillis())
 
             // 1. Recordings
@@ -56,13 +60,15 @@ object BackupManager {
                 val obj = JSONObject()
                 obj.put("id", r.id)
                 obj.put("title", r.title)
+                obj.put("filePath", r.filePath)
                 obj.put("startTimestamp", r.startTimestamp)
-                obj.put("endTimestamp", r.endTimestamp)
+                if (r.endTimestamp != null) obj.put("endTimestamp", r.endTimestamp)
                 obj.put("durationMs", r.durationMs)
                 obj.put("status", r.status)
                 obj.put("fileSizeBytes", r.fileSizeBytes)
                 obj.put("mimeType", r.mimeType)
                 obj.put("processingStatus", r.processingStatus)
+                if (r.errorDetails != null) obj.put("errorDetails", r.errorDetails)
                 recArray.put(obj)
             }
             root.put("recordings", recArray)
@@ -78,6 +84,7 @@ object BackupManager {
                 obj.put("endOffsetMs", t.endOffsetMs)
                 obj.put("text", t.text)
                 obj.put("language", t.language)
+                if (t.confidence != null) obj.put("confidence", t.confidence.toDouble())
                 obj.put("reviewStatus", t.reviewStatus)
                 trArray.put(obj)
             }
@@ -90,9 +97,9 @@ object BackupManager {
                 obj.put("id", m.id)
                 obj.put("title", m.title)
                 obj.put("startTimestamp", m.startTimestamp)
-                obj.put("endTimestamp", m.endTimestamp)
-                obj.put("summary", m.summary)
-                obj.put("sourceRecordingId", m.sourceRecordingId)
+                if (m.endTimestamp != null) obj.put("endTimestamp", m.endTimestamp)
+                if (m.summary != null) obj.put("summary", m.summary)
+                if (m.sourceRecordingId != null) obj.put("sourceRecordingId", m.sourceRecordingId)
                 meetArray.put(obj)
             }
             root.put("meetings", meetArray)
@@ -103,11 +110,11 @@ object BackupManager {
                 val obj = JSONObject()
                 obj.put("id", tsk.id)
                 obj.put("title", tsk.title)
-                obj.put("description", tsk.description)
-                obj.put("sourceMeetingId", tsk.sourceMeetingId)
-                obj.put("sourceRecordingId", tsk.sourceRecordingId)
-                obj.put("dueDate", tsk.dueDate)
-                obj.put("assignedPerson", tsk.assignedPerson)
+                if (tsk.description != null) obj.put("description", tsk.description)
+                if (tsk.sourceMeetingId != null) obj.put("sourceMeetingId", tsk.sourceMeetingId)
+                if (tsk.sourceRecordingId != null) obj.put("sourceRecordingId", tsk.sourceRecordingId)
+                if (tsk.dueDate != null) obj.put("dueDate", tsk.dueDate)
+                if (tsk.assignedPerson != null) obj.put("assignedPerson", tsk.assignedPerson)
                 obj.put("status", tsk.status)
                 taskArray.put(obj)
             }
@@ -120,8 +127,8 @@ object BackupManager {
                 obj.put("id", n.id)
                 obj.put("title", n.title)
                 obj.put("content", n.content)
-                obj.put("linkedRecordingId", n.linkedRecordingId)
-                obj.put("linkedMeetingId", n.linkedMeetingId)
+                if (n.linkedRecordingId != null) obj.put("linkedRecordingId", n.linkedRecordingId)
+                if (n.linkedMeetingId != null) obj.put("linkedMeetingId", n.linkedMeetingId)
                 obj.put("isPinned", n.isPinned)
                 noteArray.put(obj)
             }
@@ -154,21 +161,24 @@ object BackupManager {
                 fos.write(cipherText)
             }
 
-            return BackupResult(true, "Backup created successfully (${backupFile.length()} bytes)", backupFile)
+            BackupResult(true, "Backup created successfully (${backupFile.length()} bytes)", backupFile)
         } catch (e: Exception) {
-            e.printStackTrace()
-            return BackupResult(false, "Failed to create backup: ${e.message}")
+            BackupResult(false, "Failed to create backup: ${e.message}")
         }
     }
 
     suspend fun restoreEncryptedBackup(
-        context: Context,
+        @Suppress("UNUSED_PARAMETER") context: Context,
         repository: AppRepository,
         backupFile: File,
         passphrase: String
-    ): BackupResult {
-        if (!backupFile.exists() || backupFile.length() < SALT_LENGTH + IV_LENGTH + 16) {
-            return BackupResult(false, "Invalid or corrupted backup file.")
+    ): BackupResult = withContext(Dispatchers.IO) {
+        if (!backupFile.exists()) {
+            return@withContext BackupResult(false, "Backup file does not exist: ${backupFile.path}")
+        }
+
+        if (backupFile.length() < MIN_BACKUP_FILE_LENGTH) {
+            return@withContext BackupResult(false, "Invalid or corrupted backup file: file size too small (${backupFile.length()} bytes).")
         }
 
         try {
@@ -190,59 +200,134 @@ object BackupManager {
 
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.DECRYPT_MODE, secretKey, GCMParameterSpec(TAG_LENGTH_BIT, iv))
-            val plainBytes = cipher.doFinal(cipherText)
+
+            val plainBytes: ByteArray = try {
+                cipher.doFinal(cipherText)
+            } catch (e: AEADBadTagException) {
+                return@withContext BackupResult(false, "Authentication failed: invalid passphrase or corrupted backup file.")
+            } catch (e: GeneralSecurityException) {
+                return@withContext BackupResult(false, "Decryption failed: cryptographic error (${e.message}).")
+            }
 
             val jsonStr = String(plainBytes, StandardCharsets.UTF_8)
             val root = JSONObject(jsonStr)
 
-            // Restore Meetings
+            // Map old IDs to new IDs to maintain relational integrity
+            val oldToNewRecId = mutableMapOf<Long, Long>()
+            val oldToNewMeetingId = mutableMapOf<Long, Long>()
+
+            // 1. Restore Recordings
+            val recArray = root.optJSONArray("recordings") ?: JSONArray()
+            for (i in 0 until recArray.length()) {
+                val obj = recArray.getJSONObject(i)
+                val oldId = obj.getLong("id")
+                val newId = repository.insertRecording(
+                    RecordingEntity(
+                        title = obj.getString("title"),
+                        filePath = obj.optString("filePath", ""),
+                        startTimestamp = obj.getLong("startTimestamp"),
+                        endTimestamp = if (obj.has("endTimestamp") && !obj.isNull("endTimestamp")) obj.getLong("endTimestamp") else null,
+                        durationMs = obj.optLong("durationMs", 0L),
+                        status = obj.optString("status", "COMPLETED"),
+                        fileSizeBytes = obj.optLong("fileSizeBytes", 0L),
+                        mimeType = obj.optString("mimeType", "audio/wav"),
+                        processingStatus = obj.optString("processingStatus", "COMPLETED"),
+                        errorDetails = if (obj.has("errorDetails") && !obj.isNull("errorDetails")) obj.getString("errorDetails") else null
+                    )
+                )
+                oldToNewRecId[oldId] = newId
+            }
+
+            // 2. Restore Transcripts
+            val trArray = root.optJSONArray("transcripts") ?: JSONArray()
+            val transcriptsToInsert = mutableListOf<TranscriptEntity>()
+            for (i in 0 until trArray.length()) {
+                val obj = trArray.getJSONObject(i)
+                val oldRecId = obj.getLong("recordingId")
+                val newRecId = oldToNewRecId[oldRecId]
+                if (newRecId != null) {
+                    transcriptsToInsert.add(
+                        TranscriptEntity(
+                            recordingId = newRecId,
+                            segmentIndex = obj.optInt("segmentIndex", i),
+                            startOffsetMs = obj.optLong("startOffsetMs", 0L),
+                            endOffsetMs = obj.optLong("endOffsetMs", 0L),
+                            text = obj.getString("text"),
+                            language = obj.optString("language", "en"),
+                            confidence = if (obj.has("confidence") && !obj.isNull("confidence")) obj.getDouble("confidence").toFloat() else null,
+                            reviewStatus = obj.optString("reviewStatus", "AUTOMATIC")
+                        )
+                    )
+                }
+            }
+            if (transcriptsToInsert.isNotEmpty()) {
+                repository.insertTranscripts(transcriptsToInsert)
+            }
+
+            // 3. Restore Meetings
             val meetArray = root.optJSONArray("meetings") ?: JSONArray()
             for (i in 0 until meetArray.length()) {
                 val obj = meetArray.getJSONObject(i)
-                repository.insertMeeting(
+                val oldMeetId = obj.getLong("id")
+                val oldSourceRecId = if (obj.has("sourceRecordingId") && !obj.isNull("sourceRecordingId")) obj.getLong("sourceRecordingId") else null
+                val newSourceRecId = if (oldSourceRecId != null) oldToNewRecId[oldSourceRecId] else null
+
+                val newMeetId = repository.insertMeeting(
                     MeetingEntity(
                         title = obj.getString("title"),
                         startTimestamp = obj.getLong("startTimestamp"),
-                        endTimestamp = if (obj.has("endTimestamp")) obj.optLong("endTimestamp") else null,
-                        summary = obj.optString("summary"),
-                        sourceRecordingId = if (obj.has("sourceRecordingId")) obj.optLong("sourceRecordingId") else null
+                        endTimestamp = if (obj.has("endTimestamp") && !obj.isNull("endTimestamp")) obj.getLong("endTimestamp") else null,
+                        summary = if (obj.has("summary") && !obj.isNull("summary")) obj.getString("summary") else null,
+                        sourceRecordingId = newSourceRecId
                     )
                 )
+                oldToNewMeetingId[oldMeetId] = newMeetId
             }
 
-            // Restore Tasks
+            // 4. Restore Tasks
             val taskArray = root.optJSONArray("tasks") ?: JSONArray()
             for (i in 0 until taskArray.length()) {
                 val obj = taskArray.getJSONObject(i)
+                val oldSourceMeetId = if (obj.has("sourceMeetingId") && !obj.isNull("sourceMeetingId")) obj.getLong("sourceMeetingId") else null
+                val oldSourceRecId = if (obj.has("sourceRecordingId") && !obj.isNull("sourceRecordingId")) obj.getLong("sourceRecordingId") else null
+
                 repository.insertTask(
                     TaskEntity(
                         title = obj.getString("title"),
-                        description = obj.optString("description"),
-                        sourceMeetingId = if (obj.has("sourceMeetingId")) obj.optLong("sourceMeetingId") else null,
-                        dueDate = if (obj.has("dueDate")) obj.optLong("dueDate") else null,
-                        assignedPerson = obj.optString("assignedPerson"),
+                        description = if (obj.has("description") && !obj.isNull("description")) obj.getString("description") else null,
+                        sourceMeetingId = if (oldSourceMeetId != null) oldToNewMeetingId[oldSourceMeetId] else null,
+                        sourceRecordingId = if (oldSourceRecId != null) oldToNewRecId[oldSourceRecId] else null,
+                        dueDate = if (obj.has("dueDate") && !obj.isNull("dueDate")) obj.getLong("dueDate") else null,
+                        assignedPerson = if (obj.has("assignedPerson") && !obj.isNull("assignedPerson")) obj.getString("assignedPerson") else null,
                         status = obj.optString("status", "PENDING")
                     )
                 )
             }
 
-            // Restore Notes
+            // 5. Restore Notes
             val noteArray = root.optJSONArray("notes") ?: JSONArray()
             for (i in 0 until noteArray.length()) {
                 val obj = noteArray.getJSONObject(i)
+                val oldLinkedRecId = if (obj.has("linkedRecordingId") && !obj.isNull("linkedRecordingId")) obj.getLong("linkedRecordingId") else null
+                val oldLinkedMeetId = if (obj.has("linkedMeetingId") && !obj.isNull("linkedMeetingId")) obj.getLong("linkedMeetingId") else null
+
                 repository.insertNote(
                     NoteEntity(
                         title = obj.getString("title"),
                         content = obj.getString("content"),
+                        linkedRecordingId = if (oldLinkedRecId != null) oldToNewRecId[oldLinkedRecId] else null,
+                        linkedMeetingId = if (oldLinkedMeetId != null) oldToNewMeetingId[oldLinkedMeetId] else null,
                         isPinned = obj.optBoolean("isPinned", false)
                     )
                 )
             }
 
-            return BackupResult(true, "Restored ${meetArray.length()} meetings, ${taskArray.length()} tasks, ${noteArray.length()} notes.")
+            BackupResult(
+                true,
+                "Restored ${recArray.length()} recordings, ${transcriptsToInsert.size} transcripts, ${meetArray.length()} meetings, ${taskArray.length()} tasks, ${noteArray.length()} notes."
+            )
         } catch (e: Exception) {
-            e.printStackTrace()
-            return BackupResult(false, "Decryption failed. Check passphrase or file integrity.")
+            BackupResult(false, "Decryption or restore failed: ${e.message}")
         }
     }
 }

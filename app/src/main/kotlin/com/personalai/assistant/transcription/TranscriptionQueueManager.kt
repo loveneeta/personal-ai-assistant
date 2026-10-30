@@ -1,6 +1,7 @@
 package com.personalai.assistant.transcription
 
 import android.content.Context
+import android.util.Log
 import com.personalai.assistant.data.local.entity.RecordingEntity
 import com.personalai.assistant.data.local.entity.TranscriptEntity
 import com.personalai.assistant.data.repository.AppRepository
@@ -8,6 +9,7 @@ import com.personalai.assistant.transcription.models.ModelManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -29,8 +31,7 @@ class TranscriptionQueueManager(
     private val repository: AppRepository,
     private val modelManager: ModelManager
 ) {
-    private val scope = CoroutineScope(Dispatchers.IO + Job())
-    private val isRunning = AtomicBoolean(false)
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val activeJobMap = ConcurrentHashMap<Long, Boolean>()
 
     private val _progressState = MutableStateFlow<TranscriptionProgress>(TranscriptionProgress.Idle)
@@ -39,42 +40,68 @@ class TranscriptionQueueManager(
     private val engine = VoskTranscriptionEngine()
 
     init {
-        // Automatically scan and resume pending transcriptions on startup
+        // Automatically scan and resume pending transcriptions on startup once
         resumePendingTranscriptions()
     }
 
+    /**
+     * Reconciles interrupted tasks on startup (Requirement 8) and enqueues uncompleted
+     * sessions via a one-shot query instead of an unbounded Flow collector (RC-06).
+     */
     fun resumePendingTranscriptions() {
         scope.launch {
-            val allRecordings = repository.getAllRecordingsFlow()
-            // We launch one collection to check for pending items
-            launch {
-                allRecordings.collect { list ->
-                    val pending = list.filter {
-                        (it.processingStatus == "PENDING" || it.processingStatus == "PROCESSING") &&
-                                (it.status == "COMPLETED" || it.status == "INTERRUPTED")
-                    }
-                    for (rec in pending) {
-                        enqueue(rec.id)
+            try {
+                val allRecordings = repository.getAllRecordings()
+
+                // Prevent interrupted sessions from remaining stuck in PROCESSING permanently
+                for (rec in allRecordings) {
+                    if (rec.processingStatus == "PROCESSING") {
+                        Log.i(TAG, "Reconciling interrupted recording #${rec.id} from PROCESSING to PENDING")
+                        repository.updateRecording(
+                            rec.copy(
+                                processingStatus = "PENDING",
+                                errorDetails = "Processing was interrupted by application shutdown. Queued for retry.",
+                                updatedAt = System.currentTimeMillis()
+                            )
+                        )
                     }
                 }
+
+                // Filter valid items ready for transcription
+                val pending = allRecordings.filter {
+                    (it.processingStatus == "PENDING" || it.processingStatus == "PROCESSING") &&
+                            (it.status == "COMPLETED" || it.status == "INTERRUPTED")
+                }
+
+                for (rec in pending) {
+                    enqueue(rec.id)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error resuming pending transcriptions: ${e.message}", e)
             }
         }
     }
 
-    fun enqueue(recordingId: Long, explicitModelId: String? = null) {
+    /**
+     * Enqueues a recording ID for background processing with atomic deduplication.
+     */
+    fun enqueue(recordingId: Long, explicitModelId: String? = null): Boolean {
         if (activeJobMap.putIfAbsent(recordingId, true) != null) {
-            // Already queued or running, prevent duplicate processing
-            return
+            Log.d(TAG, "Recording #$recordingId is already queued or actively transcribing. Ignoring duplicate enqueue.")
+            return false
         }
 
         scope.launch {
             processRecording(recordingId, explicitModelId)
         }
+        return true
     }
 
+    /**
+     * Reprocesses a recording with an optional explicit model.
+     * Preserves previous good transcripts if replacement transcription fails (Requirement 9).
+     */
     suspend fun reprocess(recordingId: Long, explicitModelId: String? = null) = withContext(Dispatchers.IO) {
-        // Clear previous transcripts to avoid duplicates
-        repository.clearTranscripts(recordingId)
         val rec = repository.getRecording(recordingId)
         if (rec != null) {
             repository.updateRecording(
@@ -84,6 +111,7 @@ class TranscriptionQueueManager(
                     updatedAt = System.currentTimeMillis()
                 )
             )
+            // Remove from active map if previously held so it can be re-enqueued
             activeJobMap.remove(recordingId)
             enqueue(recordingId, explicitModelId)
         }
@@ -98,55 +126,62 @@ class TranscriptionQueueManager(
             }
 
             val audioFile = File(recording.filePath)
-            if (!audioFile.exists() || audioFile.length() < 44) {
+            if (!audioFile.exists() || audioFile.length() < 44L) {
+                val errorMsg = "Audio file is missing or contains no data"
                 repository.updateRecording(
                     recording.copy(
                         processingStatus = "FAILED",
-                        errorDetails = "Audio file missing or empty",
+                        errorDetails = errorMsg,
                         updatedAt = System.currentTimeMillis()
                     )
                 )
-                _progressState.value = TranscriptionProgress.Failed(recordingId, "Audio file missing or empty")
+                _progressState.value = TranscriptionProgress.Failed(recordingId, errorMsg)
                 activeJobMap.remove(recordingId)
                 return
             }
 
-            val modelDir = if (explicitModelId != null) {
-                modelManager.getModelDirectory(explicitModelId)
-            } else {
-                modelManager.getActiveModelDirectory()
-            }
+            // Validate model availability before starting transcription (Requirement 6)
+            // Never silently substitute an unrelated language model (Requirement 5)
+            val modelIdToUse = explicitModelId ?: modelManager.activeModelId.value
+            val modelDir = modelManager.getModelDirectory(modelIdToUse)
 
             if (modelDir == null) {
-                _progressState.value = TranscriptionProgress.Failed(
-                    recordingId,
-                    "No AI speech model downloaded yet. Open Settings > AI Models to download."
-                )
+                val errorMsg = if (explicitModelId != null) {
+                    "Requested speech model ($explicitModelId) is not installed. Go to Settings > AI Models."
+                } else {
+                    "Active speech model ($modelIdToUse) is not installed. Go to Settings > AI Models."
+                }
+                Log.w(TAG, errorMsg)
                 repository.updateRecording(
                     recording.copy(
                         processingStatus = "FAILED",
-                        errorDetails = "Speech model not downloaded. Go to Settings > AI Models.",
+                        errorDetails = errorMsg,
                         updatedAt = System.currentTimeMillis()
                     )
                 )
+                _progressState.value = TranscriptionProgress.Failed(recordingId, errorMsg)
                 activeJobMap.remove(recordingId)
                 return
             }
 
-            // Mark status as PROCESSING
+            // Transition status to PROCESSING
             repository.updateRecording(
                 recording.copy(
                     processingStatus = "PROCESSING",
+                    errorDetails = null,
                     updatedAt = System.currentTimeMillis()
                 )
             )
 
             _progressState.value = TranscriptionProgress.Processing(recordingId, 0.05f, "Initializing speech model...")
 
-            // Run on-device transcription
-            val modelIdToUse = explicitModelId ?: modelManager.activeModelId.value
-            val langCode = if (modelIdToUse.contains("hi")) "hi" else "en"
+            val langCode = when {
+                modelIdToUse.contains("en-in") -> "hi-en"
+                modelIdToUse.contains("hi") -> "hi"
+                else -> "en"
+            }
 
+            // Run on-device transcription
             val segments = engine.transcribe(
                 audioFile = audioFile,
                 modelDir = modelDir,
@@ -160,8 +195,10 @@ class TranscriptionQueueManager(
                 }
             )
 
-            // Clear any lingering segments and persist new ones into Room
+            // Safe replacement (Requirement 9):
+            // Only clear old transcripts AFTER new transcription has successfully finished
             repository.clearTranscripts(recordingId)
+
             if (segments.isNotEmpty()) {
                 val entities = segments.mapIndexed { index, seg ->
                     TranscriptEntity(
@@ -210,21 +247,26 @@ class TranscriptionQueueManager(
             }
 
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(TAG, "Transcription failed for recording #$recordingId: ${e.message}", e)
+            val errorMessage = e.message ?: "Transcription processing error"
+
+            // Previous transcripts are preserved in repository because clearTranscripts was not called!
             repository.updateRecording(
                 repository.getRecording(recordingId)?.copy(
                     processingStatus = "FAILED",
-                    errorDetails = e.message ?: "Transcription error",
+                    errorDetails = errorMessage,
                     updatedAt = System.currentTimeMillis()
                 ) ?: return
             )
-            _progressState.value = TranscriptionProgress.Failed(recordingId, e.message ?: "Transcription error")
+            _progressState.value = TranscriptionProgress.Failed(recordingId, errorMessage)
         } finally {
             activeJobMap.remove(recordingId)
         }
     }
 
     companion object {
+        private const val TAG = "TranscriptionQueue"
+
         @Volatile
         private var INSTANCE: TranscriptionQueueManager? = null
 

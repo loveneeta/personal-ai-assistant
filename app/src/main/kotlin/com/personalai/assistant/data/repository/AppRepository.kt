@@ -1,7 +1,10 @@
 package com.personalai.assistant.data.repository
 
+import com.personalai.assistant.data.local.entity.WakeEventEntity
+
 import android.content.Context
 import com.personalai.assistant.data.local.AppDatabase
+import com.personalai.assistant.recording.WavWriter
 import com.personalai.assistant.data.local.entity.MeetingEntity
 import com.personalai.assistant.data.local.entity.NoteEntity
 import com.personalai.assistant.data.local.entity.RecordingEntity
@@ -23,6 +26,7 @@ class AppRepository(
     private val meetingDao = database.meetingDao()
     private val taskDao = database.taskDao()
     private val noteDao = database.noteDao()
+    private val wakeEventDao = database.wakeEventDao()
 
     // --- Recordings ---
     fun getAllRecordingsFlow(): Flow<List<RecordingEntity>> = recordingDao.getAllRecordingsFlow()
@@ -52,15 +56,23 @@ class AppRepository(
         recordingDao.rename(id, newTitle, System.currentTimeMillis())
     }
 
-    suspend fun deleteRecording(id: Long) = withContext(Dispatchers.IO) {
-        val rec = recordingDao.getById(id)
-        if (rec != null) {
+    suspend fun deleteRecording(id: Long): Boolean = withContext(Dispatchers.IO) {
+        val rec = recordingDao.getById(id) ?: return@withContext false
+        if (rec.status == "RECORDING" || rec.status == "PAUSED" || rec.processingStatus == "PROCESSING") {
+            // Safety guard: Never delete audio currently being recorded or transcribed!
+            return@withContext false
+        }
+        if (rec.filePath.isNotBlank()) {
             val file = File(rec.filePath)
             if (file.exists()) {
-                file.delete()
+                val deleted = file.delete()
+                if (!deleted) {
+                    return@withContext false
+                }
             }
-            recordingDao.deleteById(id)
         }
+        recordingDao.deleteById(id)
+        true
     }
 
     // --- Crash Recovery & Incomplete Session Reconciliation ---
@@ -83,12 +95,7 @@ class AppRepository(
             } else {
                 // Audio file exists with data! Reconcile WAV header and mark as INTERRUPTED/RECOVERED
                 val actualLength = file.length()
-                val audioDataSize = (actualLength - 44).coerceAtLeast(0)
-                // 16kHz 16-bit mono = 32000 bytes/sec
-                val calculatedDurationMs = (audioDataSize * 1000L) / 32000L
-
-                // Repair WAV RIFF header in place if needed
-                repairWavHeader(file, audioDataSize)
+                val calculatedDurationMs = WavWriter.repairIncompleteWav(file)
 
                 recordingDao.finalizeRecording(
                     id = rec.id,
@@ -104,36 +111,14 @@ class AppRepository(
         recovered
     }
 
-    private fun repairWavHeader(file: File, audioDataSize: Long) {
-        try {
-            RandomAccessFile(file, "rw").use { raf ->
-                // ChunkSize at byte 4 (audioDataSize + 36)
-                raf.seek(4)
-                val chunkSize = (audioDataSize + 36).toInt()
-                raf.write(chunkSize and 0xff)
-                raf.write((chunkSize shr 8) and 0xff)
-                raf.write((chunkSize shr 16) and 0xff)
-                raf.write((chunkSize shr 24) and 0xff)
-
-                // Subchunk2Size at byte 40 (audioDataSize)
-                raf.seek(40)
-                val subchunk2Size = audioDataSize.toInt()
-                raf.write(subchunk2Size and 0xff)
-                raf.write((subchunk2Size shr 8) and 0xff)
-                raf.write((subchunk2Size shr 16) and 0xff)
-                raf.write((subchunk2Size shr 24) and 0xff)
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-    }
-
     suspend fun getAllRecordings(): List<RecordingEntity> = withContext(Dispatchers.IO) {
         recordingDao.getAllRecordings()
     }
 
     suspend fun searchRecordings(query: String): List<RecordingEntity> = withContext(Dispatchers.IO) {
-        recordingDao.searchRecordings(query)
+        val trimmed = query.trim()
+        if (trimmed.isEmpty()) return@withContext emptyList()
+        recordingDao.searchRecordings(trimmed)
     }
 
     // --- Transcripts ---
@@ -164,11 +149,17 @@ class AppRepository(
         val trimmed = query.trim()
         if (trimmed.isEmpty()) return@withContext emptyList()
         try {
-            // First attempt FTS search with match pattern
-            val ftsQuery = trimmed.replace("\"", "") + "*"
+            val sanitized = trimmed.filter { it.isLetterOrDigit() || it.isWhitespace() }.trim()
+            if (sanitized.isEmpty()) {
+                return@withContext transcriptDao.searchTranscriptsLike(trimmed)
+            }
+            val tokens = sanitized.split(" ").filter { it.isNotBlank() }
+            if (tokens.isEmpty()) {
+                return@withContext transcriptDao.searchTranscriptsLike(trimmed)
+            }
+            val ftsQuery = tokens.joinToString(" ") { "$it*" }
             transcriptDao.searchTranscriptsFts(ftsQuery)
-        } catch (e: Exception) {
-            // Fallback to standard LIKE if syntax fails
+        } catch (_: Exception) {
             transcriptDao.searchTranscriptsLike(trimmed)
         }
     }
@@ -184,7 +175,9 @@ class AppRepository(
         meetingDao.getAllMeetings()
     }
     suspend fun searchMeetings(query: String): List<MeetingEntity> = withContext(Dispatchers.IO) {
-        meetingDao.searchMeetings(query)
+        val trimmed = query.trim()
+        if (trimmed.isEmpty()) return@withContext emptyList()
+        meetingDao.searchMeetings(trimmed)
     }
     suspend fun insertMeeting(meeting: MeetingEntity): Long = withContext(Dispatchers.IO) {
         meetingDao.insert(meeting)
@@ -207,7 +200,9 @@ class AppRepository(
         taskDao.getAllTasks()
     }
     suspend fun searchTasks(query: String): List<TaskEntity> = withContext(Dispatchers.IO) {
-        taskDao.searchTasks(query)
+        val trimmed = query.trim()
+        if (trimmed.isEmpty()) return@withContext emptyList()
+        taskDao.searchTasks(trimmed)
     }
     suspend fun insertTask(task: TaskEntity): Long = withContext(Dispatchers.IO) {
         taskDao.insert(task)
@@ -229,7 +224,9 @@ class AppRepository(
         noteDao.getAllNotes()
     }
     suspend fun searchNotes(query: String): List<NoteEntity> = withContext(Dispatchers.IO) {
-        noteDao.searchNotes(query)
+        val trimmed = query.trim()
+        if (trimmed.isEmpty()) return@withContext emptyList()
+        noteDao.searchNotes(trimmed)
     }
     suspend fun insertNote(note: NoteEntity): Long = withContext(Dispatchers.IO) {
         noteDao.insert(note)
@@ -244,12 +241,43 @@ class AppRepository(
         noteDao.deleteById(id)
     }
 
+
+    // --- Wake Events & Voice Protocol ---
+    suspend fun insertWakeEvent(event: WakeEventEntity): Long = withContext(Dispatchers.IO) {
+        wakeEventDao.insert(event)
+    }
+
+    fun getRecentWakeEventsFlow(limit: Int = 20): Flow<List<WakeEventEntity>> {
+        return wakeEventDao.getRecentWakeEventsFlow(limit)
+    }
+
+    suspend fun getAllWakeEvents(): List<WakeEventEntity> = withContext(Dispatchers.IO) {
+        wakeEventDao.getAllWakeEvents()
+    }
+
+    suspend fun clearWakeEvents() = withContext(Dispatchers.IO) {
+        wakeEventDao.clearAll()
+    }
+
     // --- Retention & Clean up ---
+    suspend fun updateRecordingFilePath(id: Long, newPath: String) = withContext(Dispatchers.IO) {
+        recordingDao.updateFilePath(id, newPath, System.currentTimeMillis())
+    }
+
     suspend fun deleteAudioKeepTranscript(recordingId: Long): Boolean = withContext(Dispatchers.IO) {
         val rec = recordingDao.getById(recordingId) ?: return@withContext false
-        val file = File(rec.filePath)
-        if (file.exists()) {
-            file.delete()
+        if (rec.status == "RECORDING" || rec.status == "PAUSED" || rec.processingStatus == "PROCESSING") {
+            // Safety guard: Never delete audio while capture or transcription is active
+            return@withContext false
+        }
+        if (rec.filePath.isNotBlank()) {
+            val file = File(rec.filePath)
+            if (file.exists()) {
+                val deleted = file.delete()
+                if (!deleted) {
+                    return@withContext false
+                }
+            }
         }
         recordingDao.updateFilePath(recordingId, "", System.currentTimeMillis())
         true

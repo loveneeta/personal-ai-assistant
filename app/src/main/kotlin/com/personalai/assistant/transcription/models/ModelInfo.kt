@@ -1,5 +1,37 @@
 package com.personalai.assistant.transcription.models
 
+enum class TranscriptionLanguageMode(
+    val id: String,
+    val displayName: String,
+    val description: String,
+    val recommendedModelId: String
+) {
+    AUTO_HINGLISH(
+        id = "auto_hinglish",
+        displayName = "Auto Hinglish (Hindi + English)",
+        description = "Intelligently handles code-switching between Hindi and English within the same sentence.",
+        recommendedModelId = "vosk-model-small-en-in-0.4"
+    ),
+    INDIAN_ENGLISH(
+        id = "en_in",
+        displayName = "Indian English",
+        description = "Acoustically tuned for Indian English accents, local business terminology, and speech cadences.",
+        recommendedModelId = "vosk-model-small-en-in-0.4"
+    ),
+    PURE_HINDI(
+        id = "hi_devanagari",
+        displayName = "Hindi (Devanagari)",
+        description = "Lightweight offline Hindi acoustic model producing Devanagari script output.",
+        recommendedModelId = "vosk-model-small-hi-0.22"
+    ),
+    GENERAL_ENGLISH(
+        id = "en_us",
+        displayName = "Universal English",
+        description = "Standard compact US/Universal English speech recognition.",
+        recommendedModelId = "vosk-model-small-en-us-0.15"
+    )
+}
+
 data class ModelInfo(
     val id: String,
     val name: String,

@@ -16,8 +16,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -40,7 +42,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.personalai.assistant.transcription.models.ModelDownloadStage
 import com.personalai.assistant.transcription.models.ModelInfo
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -54,19 +58,34 @@ fun ModelsScreen(
     val activeId by viewModel.activeModelId.collectAsStateWithLifecycle()
     val downloadingId by viewModel.downloadingModelId.collectAsStateWithLifecycle()
     val progress by viewModel.downloadProgress.collectAsStateWithLifecycle()
+    val stage by viewModel.downloadStage.collectAsStateWithLifecycle()
     val statusMsg by viewModel.statusMessage.collectAsStateWithLifecycle()
 
     Scaffold(
+        containerColor = com.personalai.assistant.ui.theme.JarvisCosmicBlack,
         topBar = {
             TopAppBar(
-                title = { Text("On-Device Speech Models") },
+                title = {
+                    Column {
+                        Text("ON-DEVICE NEURAL MODELS", color = com.personalai.assistant.ui.theme.JarvisTextPrimary, fontWeight = FontWeight.Bold)
+                        Text(
+                            "OFFLINE ASR & ACOUSTIC PACKS",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = com.personalai.assistant.ui.theme.JarvisCyan,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            fontSize = 9.sp,
+                            letterSpacing = 1.sp
+                        )
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = com.personalai.assistant.ui.theme.JarvisCyan)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    containerColor = com.personalai.assistant.ui.theme.JarvisDeepNavy.copy(alpha = 0.95f),
+                    titleContentColor = com.personalai.assistant.ui.theme.JarvisTextPrimary
                 )
             )
         }
@@ -94,7 +113,7 @@ fun ModelsScreen(
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            "Speech-to-text transcription runs directly on your device CPU. Models are downloaded once from open-source repositories and never require internet or ongoing subscriptions.",
+                            "Speech-to-text transcription runs directly on your device CPU. Models are downloaded once from verified open repositories and never transmit speech audio to external servers.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
@@ -104,12 +123,25 @@ fun ModelsScreen(
 
             if (statusMsg != null) {
                 item {
-                    Text(
-                        statusMsg!!,
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
+                    val isError = statusMsg!!.contains("failed", ignoreCase = true) || statusMsg!!.contains("Error", ignoreCase = true)
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (isError) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surfaceVariant,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                statusMsg!!,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium,
+                                color = if (isError) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
                 }
             }
 
@@ -122,7 +154,9 @@ fun ModelsScreen(
                     isActive = isThisActive,
                     isDownloading = isThisDownloading,
                     downloadProgress = if (isThisDownloading) progress else 0f,
+                    downloadStage = if (isThisDownloading) stage else ModelDownloadStage.Idle,
                     onDownload = { viewModel.download(model.id) },
+                    onCancel = { viewModel.cancelDownload() },
                     onActivate = { viewModel.selectActive(model.id) },
                     onDelete = { viewModel.delete(model.id) }
                 )
@@ -137,7 +171,9 @@ fun ModelCard(
     isActive: Boolean,
     isDownloading: Boolean,
     downloadProgress: Float,
+    downloadStage: ModelDownloadStage,
     onDownload: () -> Unit,
+    onCancel: () -> Unit,
     onActivate: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -221,13 +257,27 @@ fun ModelCard(
 
             if (isDownloading) {
                 Spacer(modifier = Modifier.height(12.dp))
-                LinearProgressIndicator(
-                    progress = { downloadProgress },
-                    modifier = Modifier.fillMaxWidth()
-                )
+                when (downloadStage) {
+                    is ModelDownloadStage.Extracting, is ModelDownloadStage.Verifying -> {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    }
+                    else -> {
+                        LinearProgressIndicator(
+                            progress = { downloadProgress },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
                 Spacer(modifier = Modifier.height(4.dp))
+                val stageText = when (downloadStage) {
+                    is ModelDownloadStage.Connecting -> "Connecting to server..."
+                    is ModelDownloadStage.Extracting -> "Extracting model files safely..."
+                    is ModelDownloadStage.Verifying -> "Verifying acoustic model integrity..."
+                    is ModelDownloadStage.Completed -> "Installation verified!"
+                    else -> "Downloading: ${(downloadProgress * 100).toInt()}%"
+                }
                 Text(
-                    "Downloading: ${(downloadProgress * 100).toInt()}%",
+                    stageText,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary
                 )
@@ -239,10 +289,16 @@ fun ModelCard(
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                if (!model.isDownloaded) {
+                if (isDownloading) {
+                    OutlinedButton(onClick = onCancel) {
+                        Icon(Icons.Default.Close, contentDescription = null)
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Cancel")
+                    }
+                } else if (!model.isDownloaded) {
                     Button(
                         onClick = onDownload,
-                        enabled = !isDownloading
+                        enabled = true
                     ) {
                         Icon(Icons.Default.Download, contentDescription = null)
                         Spacer(modifier = Modifier.width(4.dp))
