@@ -102,6 +102,16 @@ fun SettingsScreen(
     val isSpeakerEnrolled by viewModel.isSpeakerEnrolled.collectAsStateWithLifecycle()
     val isSpeakerVerificationEnabled by viewModel.isSpeakerVerificationEnabled.collectAsStateWithLifecycle()
 
+    val isOpenJarvisEnabled by viewModel.isOpenJarvisEnabled.collectAsStateWithLifecycle()
+    val openJarvisServerUrl by viewModel.openJarvisServerUrl.collectAsStateWithLifecycle()
+    val openJarvisApiKey by viewModel.openJarvisApiKey.collectAsStateWithLifecycle()
+    val openJarvisModel by viewModel.openJarvisModel.collectAsStateWithLifecycle()
+    val openJarvisStatus by viewModel.openJarvisStatus.collectAsStateWithLifecycle()
+
+    var serverUrlInput by remember(openJarvisServerUrl) { mutableStateOf(openJarvisServerUrl) }
+    var apiKeyInput by remember(openJarvisApiKey) { mutableStateOf(openJarvisApiKey) }
+    var modelInput by remember(openJarvisModel) { mutableStateOf(openJarvisModel) }
+
     var wakeWordText by remember { mutableStateOf(viewModel.wakeWord.value) }
     var wakeSensitivity by remember { mutableFloatStateOf(viewModel.wakeSensitivity.value) }
     var timeoutSeconds by remember { mutableIntStateOf(viewModel.commandTimeoutSeconds.value) }
@@ -172,6 +182,174 @@ fun SettingsScreen(
                     )
                 }
             }
+
+            // OpenJarvis Cloud / LAN Brain Card
+            JarvisGlassCard(
+                modifier = Modifier.fillMaxWidth(),
+                borderColor = JarvisBorderCyan
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = JarvisCyan)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text(
+                                    "OpenJarvis Neural Brain",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = JarvisTextPrimary
+                                )
+                                Text(
+                                    if (isOpenJarvisEnabled) "NVIDIA Nemotron Bridge Active" else "Offline On-Device Only",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (isOpenJarvisEnabled) JarvisCyan else JarvisTextMuted,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        }
+                        Switch(
+                            checked = isOpenJarvisEnabled,
+                            onCheckedChange = { viewModel.setOpenJarvisEnabled(it) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = JarvisCyan,
+                                checkedTrackColor = JarvisSurfaceDark,
+                                uncheckedThumbColor = JarvisTextMuted,
+                                uncheckedTrackColor = JarvisSurfaceGlass
+                            )
+                        )
+                    }
+
+                    if (isOpenJarvisEnabled) {
+                        Spacer(modifier = Modifier.height(14.dp))
+                        Text(
+                            "Routes chat and meeting queries to your OpenJarvis server running on your PC or LAN, utilizing your NVIDIA NIM API key for high-intelligence reasoning.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = JarvisTextSecondary
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        OutlinedTextField(
+                            value = serverUrlInput,
+                            onValueChange = {
+                                serverUrlInput = it
+                                viewModel.updateOpenJarvisSettings(it, apiKeyInput, modelInput)
+                            },
+                            label = { Text("Server Base URL") },
+                            placeholder = { Text("http://192.168.1.50:8000 or tunnel URL") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = JarvisCyan,
+                                unfocusedBorderColor = JarvisBorderCyan,
+                                focusedTextColor = JarvisTextPrimary,
+                                unfocusedTextColor = JarvisTextPrimary,
+                                focusedLabelColor = JarvisCyan,
+                                unfocusedLabelColor = JarvisTextSecondary
+                            )
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        OutlinedTextField(
+                            value = apiKeyInput,
+                            onValueChange = {
+                                apiKeyInput = it
+                                viewModel.updateOpenJarvisSettings(serverUrlInput, it, modelInput)
+                            },
+                            label = { Text("OpenJarvis API Key (Optional)") },
+                            placeholder = { Text("Leave blank if server has no key") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = JarvisCyan,
+                                unfocusedBorderColor = JarvisBorderCyan,
+                                focusedTextColor = JarvisTextPrimary,
+                                unfocusedTextColor = JarvisTextPrimary,
+                                focusedLabelColor = JarvisCyan,
+                                unfocusedLabelColor = JarvisTextSecondary
+                            )
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        OutlinedTextField(
+                            value = modelInput,
+                            onValueChange = {
+                                modelInput = it
+                                viewModel.updateOpenJarvisSettings(serverUrlInput, apiKeyInput, it)
+                            },
+                            label = { Text("Model ID") },
+                            placeholder = { Text("nvidia/nemotron-3.5-lightning-30b-a3b") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = JarvisCyan,
+                                unfocusedBorderColor = JarvisBorderCyan,
+                                focusedTextColor = JarvisTextPrimary,
+                                unfocusedTextColor = JarvisTextPrimary,
+                                focusedLabelColor = JarvisCyan,
+                                unfocusedLabelColor = JarvisTextSecondary
+                            )
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = { viewModel.testOpenJarvisConnection() },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = JarvisCyan,
+                                    contentColor = JarvisCosmicBlack
+                                ),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("Test Ping", fontWeight = FontWeight.Bold)
+                            }
+
+                            FilledTonalButton(
+                                onClick = {
+                                    viewModel.syncAllToOpenJarvis { msg ->
+                                        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("Sync Notes")
+                            }
+                        }
+
+                        if (!openJarvisStatus.isNullOrBlank()) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = JarvisSurfaceDark,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    openJarvisStatus!!,
+                                    modifier = Modifier.padding(10.dp),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (openJarvisStatus!!.startsWith("✓")) JarvisCyan else MaterialTheme.colorScheme.error,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
 
             // 1. Hands-Free Wake-Word & Speaker Auth Protocol Card
             JarvisGlassCard(

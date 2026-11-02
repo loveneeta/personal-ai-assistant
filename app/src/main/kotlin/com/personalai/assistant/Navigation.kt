@@ -127,7 +127,7 @@ fun MainNavigation() {
 
             entry<ChatNavKey> {
                 val chatViewModel: ChatViewModel = viewModel {
-                    ChatViewModel(repository)
+                    ChatViewModel(repository, context)
                 }
                 ChatScreen(
                     viewModel = chatViewModel,

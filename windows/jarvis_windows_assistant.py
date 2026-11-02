@@ -227,7 +227,28 @@ class JarvisWindowsAssistant:
         print(f"\n[JARVIS Windows] Ready & listening for '{self.configured_wake_word}'...")
 
     def query_local_assistant(self, prompt):
-        """Queries local Ollama instance on http://127.0.0.1:11434 with fallback."""
+        """Queries OpenJarvis API (http://127.0.0.1:8000) with NVIDIA NIM, then Ollama fallback."""
+        # 1. Try OpenJarvis Server (OpenAI-compatible)
+        try:
+            oj_req = json.dumps({
+                "model": "nvidia/nemotron-3.5-lightning-30b-a3b",
+                "messages": [
+                    {"role": "system", "content": "You are JARVIS, Loveneet's personal assistant. Answer concisely in 1-2 sentences."},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.7,
+                "max_tokens": 150
+            }).encode("utf-8")
+            req = urllib.request.Request("http://127.0.0.1:8000/v1/chat/completions", data=oj_req, headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                choices = data.get("choices", [])
+                if choices:
+                    return choices[0].get("message", {}).get("content", "").strip()
+        except Exception:
+            pass  # Fall through to local Ollama
+
+        # 2. Try local Ollama instance
         try:
             req_data = json.dumps({
                 "model": "qwen2.5:0.5b",

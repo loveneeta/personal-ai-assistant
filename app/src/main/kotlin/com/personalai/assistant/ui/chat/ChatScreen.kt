@@ -86,7 +86,12 @@ fun ChatScreen(
 ) {
     val messages by viewModel.messages.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
+    val isOpenJarvisActive by viewModel.isOpenJarvisActive.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
+
+    LaunchedEffect(Unit) {
+        viewModel.refreshOpenJarvisState()
+    }
 
     var inputPrompt by remember { mutableStateOf("") }
 
@@ -149,7 +154,10 @@ fun ChatScreen(
                             )
                         }
                         Spacer(modifier = Modifier.width(4.dp))
-                        JarvisStatusBadge(label = "RAG ONLINE", isPulsing = true)
+                        JarvisStatusBadge(
+                            label = if (isOpenJarvisActive) "OPENJARVIS ONLINE" else "OFFLINE RAG",
+                            isPulsing = true
+                        )
                     }
                 },
                 navigationIcon = {

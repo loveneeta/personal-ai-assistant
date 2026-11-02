@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.personalai.assistant.ai.DailySummarySynthesizer
+import com.personalai.assistant.ai.OpenJarvisManager
 import com.personalai.assistant.backup.BackupManager
 import com.personalai.assistant.backup.BackupResult
 import com.personalai.assistant.data.local.entity.NoteEntity
@@ -64,6 +65,72 @@ class SettingsViewModel(
     val wakeSensitivity = MutableStateFlow(0.70f)
     val commandTimeoutSeconds = MutableStateFlow(6)
     val rawAudioRetention = MutableStateFlow(false)
+
+    // OpenJarvis Integration settings
+    val isOpenJarvisEnabled = MutableStateFlow(OpenJarvisManager.isEnabled(context))
+    val openJarvisServerUrl = MutableStateFlow(OpenJarvisManager.getServerUrl(context))
+    val openJarvisApiKey = MutableStateFlow(OpenJarvisManager.getApiKey(context))
+    val openJarvisModel = MutableStateFlow(OpenJarvisManager.getModel(context))
+    val openJarvisStatus = MutableStateFlow<String?>(null)
+
+    fun setOpenJarvisEnabled(enabled: Boolean) {
+        OpenJarvisManager.setEnabled(context, enabled)
+        isOpenJarvisEnabled.value = enabled
+    }
+
+    fun updateOpenJarvisSettings(url: String, key: String, model: String) {
+        OpenJarvisManager.setServerUrl(context, url)
+        OpenJarvisManager.setApiKey(context, key)
+        OpenJarvisManager.setModel(context, model)
+        openJarvisServerUrl.value = OpenJarvisManager.getServerUrl(context)
+        openJarvisApiKey.value = OpenJarvisManager.getApiKey(context)
+        openJarvisModel.value = OpenJarvisManager.getModel(context)
+    }
+
+    fun testOpenJarvisConnection() {
+        viewModelScope.launch {
+            openJarvisStatus.value = "Testing connection to OpenJarvis..."
+            val res = OpenJarvisManager.testConnection(context)
+            if (res.isSuccess) {
+                openJarvisStatus.value = "✓ " + res.getOrThrow()
+            } else {
+                openJarvisStatus.value = "✗ Connection failed: " + (res.exceptionOrNull()?.message ?: "unknown error")
+            }
+        }
+    }
+
+    fun syncAllToOpenJarvis(onComplete: (String) -> Unit) {
+        viewModelScope.launch {
+            openJarvisStatus.value = "Syncing local knowledge to OpenJarvis..."
+            try {
+                var totalSynced = 0
+                val meetings = repository.getAllMeetings()
+                for (m in meetings) {
+                    val summary = m.summary ?: ""
+                    if (summary.isNotBlank()) {
+                        OpenJarvisManager.syncKnowledge(context, "Meeting: ${m.title}", summary)
+                        totalSynced++
+                    }
+                }
+
+                val notes = repository.getAllNotes()
+                for (n in notes) {
+                    if (n.content.isNotBlank()) {
+                        OpenJarvisManager.syncKnowledge(context, "Note: ${n.title}", n.content)
+                        totalSynced++
+                    }
+                }
+
+                val msg = "Synced $totalSynced documents to OpenJarvis Knowledge Store!"
+                openJarvisStatus.value = "✓ $msg"
+                onComplete(msg)
+            } catch (e: Exception) {
+                val err = "Sync error: ${e.message}"
+                openJarvisStatus.value = "✗ $err"
+                onComplete(err)
+            }
+        }
+    }
 
     init {
         refreshStorageStats()
