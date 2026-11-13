@@ -1,7 +1,12 @@
 package com.personalai.assistant.wakeword
 
+import android.Manifest
+import android.app.Application
+import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import com.personalai.assistant.data.local.entity.WakeEventEntity
+import com.personalai.assistant.data.repository.AppRepository
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -10,25 +15,52 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows
 import org.robolectric.annotation.Config
+import kotlinx.coroutines.runBlocking
 import kotlin.math.sin
+
+class FakeWakeWordEngine : WakeWordEngine {
+    override val engineName: String = "FakeWakeWordEngine"
+    override var isReady: Boolean = true
+    override fun initialize(wakeWord: String, sensitivity: Float): Boolean = true
+    override fun processPcmChunk(pcmData: ShortArray, length: Int): Boolean = false
+    override fun reset() {}
+    override fun release() {}
+}
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class WakeWordStateMachineTest {
 
+    private lateinit var context: Context
     private lateinit var speakerManager: SpeakerProfileManager
+    private lateinit var repository: AppRepository
+    private lateinit var fakeWakeWordEngine: FakeWakeWordEngine
+    private lateinit var stateMachine: JarvisVoiceStateMachine
 
     @Before
     fun setup() {
-        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        context = ApplicationProvider.getApplicationContext<Context>()
+        val app = Shadows.shadowOf(context as Application)
+        app.grantPermissions(Manifest.permission.RECORD_AUDIO)
+
+        JarvisVoiceCoordinator.forceRelease()
         speakerManager = SpeakerProfileManager(context)
         speakerManager.deleteProfile()
+        repository = AppRepository.getInstance(context)
+        fakeWakeWordEngine = FakeWakeWordEngine()
+        stateMachine = JarvisVoiceStateMachine(context, repository, speakerManager, fakeWakeWordEngine)
+    }
+
+    @After
+    fun tearDown() {
+        stateMachine.release()
+        JarvisVoiceCoordinator.forceRelease()
     }
 
     @Test
     fun testAudioStates_completeness() {
-        // Ensure all required state transitions exist in the state machine
         val states = JarvisAudioState.values()
         assertTrue(states.contains(JarvisAudioState.IDLE_DISABLED))
         assertTrue(states.contains(JarvisAudioState.STARTING))
@@ -42,6 +74,175 @@ class WakeWordStateMachineTest {
         assertTrue(states.contains(JarvisAudioState.STOPPED))
         assertTrue(states.contains(JarvisAudioState.PERMISSION_DENIED))
         assertTrue(states.contains(JarvisAudioState.ERROR))
+    }
+
+    @Test
+    fun testMicrophonePause_actuallyStopsCaptureAndReleasesCoordinator() {
+        stateMachine.startHandsFree()
+        assertEquals(JarvisAudioState.WAKE_LISTENING, stateMachine.currentState.value)
+        assertTrue("Microphone must be capturing", stateMachine.isCapturing())
+        assertTrue("Desired listening must be true", stateMachine.isDesiredListening())
+        assertEquals(AudioOwner.ALWAYS_ON_LISTENER, JarvisVoiceCoordinator.currentOwner.value)
+
+        // Pause hands-free
+        stateMachine.pauseHandsFree()
+
+        assertEquals(JarvisAudioState.PAUSED, stateMachine.currentState.value)
+        assertFalse("PAUSED must mean microphone capture has actually stopped", stateMachine.isCapturing())
+        assertFalse("PAUSED must mean desired listening is false", stateMachine.isDesiredListening())
+        assertEquals("PAUSED must reset sound level", 0f, stateMachine.soundLevel.value, 0.001f)
+        assertEquals("PAUSED must release microphone coordinator", AudioOwner.NONE, JarvisVoiceCoordinator.currentOwner.value)
+    }
+
+    @Test
+    fun testMicrophoneResume_startsCaptureLoopSafely() {
+        stateMachine.startHandsFree()
+        stateMachine.pauseHandsFree()
+        assertEquals(JarvisAudioState.PAUSED, stateMachine.currentState.value)
+        assertFalse(stateMachine.isCapturing())
+
+        // Resume hands-free
+        stateMachine.resumeHandsFree()
+
+        assertEquals(JarvisAudioState.WAKE_LISTENING, stateMachine.currentState.value)
+        assertTrue(stateMachine.isCapturing())
+        assertTrue(stateMachine.isDesiredListening())
+        assertEquals(AudioOwner.ALWAYS_ON_LISTENER, JarvisVoiceCoordinator.currentOwner.value)
+    }
+
+    @Test
+    fun testMicrophoneStop_releasesAllResources() {
+        stateMachine.startHandsFree()
+        assertTrue(stateMachine.isCapturing())
+
+        // Stop hands-free
+        stateMachine.stopHandsFree()
+
+        assertEquals(JarvisAudioState.IDLE_DISABLED, stateMachine.currentState.value)
+        assertFalse("STOPPED must mean capture resources released", stateMachine.isCapturing())
+        assertFalse(stateMachine.isDesiredListening())
+        assertEquals(AudioOwner.NONE, JarvisVoiceCoordinator.currentOwner.value)
+    }
+
+    @Test
+    fun testRepeatedPauseResume_doesNotDuplicateLoops() {
+        stateMachine.startHandsFree()
+
+        for (i in 1..5) {
+            stateMachine.pauseHandsFree()
+            assertEquals(JarvisAudioState.PAUSED, stateMachine.currentState.value)
+            assertFalse(stateMachine.isCapturing())
+            assertEquals(AudioOwner.NONE, JarvisVoiceCoordinator.currentOwner.value)
+
+            stateMachine.resumeHandsFree()
+            assertEquals(JarvisAudioState.WAKE_LISTENING, stateMachine.currentState.value)
+            assertTrue(stateMachine.isCapturing())
+            assertEquals(AudioOwner.ALWAYS_ON_LISTENER, JarvisVoiceCoordinator.currentOwner.value)
+        }
+
+        // Duplicate resume calls while already in WAKE_LISTENING should be safely ignored
+        stateMachine.resumeHandsFree()
+        assertEquals(JarvisAudioState.WAKE_LISTENING, stateMachine.currentState.value)
+        assertTrue(stateMachine.isCapturing())
+
+        stateMachine.stopHandsFree()
+        assertFalse(stateMachine.isCapturing())
+        assertEquals(AudioOwner.NONE, JarvisVoiceCoordinator.currentOwner.value)
+    }
+
+    @Test
+    fun testPermissionRevocation_transitionsToPermissionDenied() {
+        val app = Shadows.shadowOf(context as Application)
+        app.denyPermissions(Manifest.permission.RECORD_AUDIO)
+
+        stateMachine.startHandsFree()
+
+        assertEquals(JarvisAudioState.PERMISSION_DENIED, stateMachine.currentState.value)
+        assertFalse(stateMachine.isCapturing())
+        assertEquals(AudioOwner.NONE, JarvisVoiceCoordinator.currentOwner.value)
+    }
+
+    @Test
+    fun testCoordinatorCollision_transitionsToPausedWhenMicUnavailable() {
+        // High priority owner acquires mic
+        assertTrue(JarvisVoiceCoordinator.requestMicrophone(AudioOwner.WAV_RECORDER))
+        assertEquals(AudioOwner.WAV_RECORDER, JarvisVoiceCoordinator.currentOwner.value)
+
+        stateMachine.startHandsFree()
+
+        assertEquals(JarvisAudioState.PAUSED, stateMachine.currentState.value)
+        assertFalse(stateMachine.isCapturing())
+        assertEquals(AudioOwner.WAV_RECORDER, JarvisVoiceCoordinator.currentOwner.value)
+
+        // Release WAV recorder
+        JarvisVoiceCoordinator.releaseMicrophone(AudioOwner.WAV_RECORDER)
+    }
+
+    @Test
+    fun testTtsOnDoneAfterPause_doesNotRestartListening() {
+        val sessionId = stateMachine.simulateSpeakingState()
+        assertEquals(JarvisAudioState.SPEAKING, stateMachine.currentState.value)
+
+        // User pauses hands-free during TTS speech
+        stateMachine.pauseHandsFree()
+        assertEquals(JarvisAudioState.PAUSED, stateMachine.currentState.value)
+        assertFalse(stateMachine.isCapturing())
+        assertFalse(stateMachine.isDesiredListening())
+
+        // In-flight TTS onDone callback arrives
+        val job = stateMachine.handleTtsCompletion("JARVIS_RESPONSE_$sessionId", skipDelay = true)
+        runBlocking { job?.join() }
+
+        // Must remain PAUSED and microphone must NOT be reactivated
+        assertEquals(JarvisAudioState.PAUSED, stateMachine.currentState.value)
+        assertFalse("PAUSED must never capture audio after TTS completion", stateMachine.isCapturing())
+        assertEquals(AudioOwner.NONE, JarvisVoiceCoordinator.currentOwner.value)
+    }
+
+    @Test
+    fun testTtsOnErrorAfterStop_doesNotRestartListening() {
+        val sessionId = stateMachine.simulateSpeakingState()
+        assertEquals(JarvisAudioState.SPEAKING, stateMachine.currentState.value)
+
+        // User stops hands-free during speech
+        stateMachine.stopHandsFree()
+        assertEquals(JarvisAudioState.IDLE_DISABLED, stateMachine.currentState.value)
+        assertFalse(stateMachine.isCapturing())
+        assertFalse(stateMachine.isDesiredListening())
+
+        // TTS error callback arrives
+        val job = stateMachine.handleTtsCompletion("JARVIS_RESPONSE_$sessionId", skipDelay = true)
+        runBlocking { job?.join() }
+
+        assertEquals(JarvisAudioState.IDLE_DISABLED, stateMachine.currentState.value)
+        assertFalse(stateMachine.isCapturing())
+        assertEquals(AudioOwner.NONE, JarvisVoiceCoordinator.currentOwner.value)
+    }
+
+    @Test
+    fun testStaleTtsCallbackRejection() {
+        val session1 = stateMachine.simulateSpeakingState(101L)
+        assertEquals(JarvisAudioState.SPEAKING, stateMachine.currentState.value)
+
+        // User speaks a new command, advancing session ID
+        val session2 = stateMachine.simulateSpeakingState(102L)
+        assertEquals(102L, session2)
+
+        // Stale callback from session 101 arrives
+        val staleJob = stateMachine.handleTtsCompletion("JARVIS_RESPONSE_101", skipDelay = true)
+        runBlocking { staleJob?.join() }
+
+        // Must be rejected and remain in SPEAKING
+        assertEquals(JarvisAudioState.SPEAKING, stateMachine.currentState.value)
+
+        // Active callback from session 102 arrives
+        val activeJob = stateMachine.handleTtsCompletion("JARVIS_RESPONSE_102", skipDelay = true)
+        runBlocking { activeJob?.join() }
+
+        // Transitions cleanly to WAKE_LISTENING
+        assertEquals(JarvisAudioState.WAKE_LISTENING, stateMachine.currentState.value)
+        assertTrue(stateMachine.isCapturing())
+        assertEquals(AudioOwner.ALWAYS_ON_LISTENER, JarvisVoiceCoordinator.currentOwner.value)
     }
 
     @Test
@@ -133,6 +334,7 @@ class WakeWordStateMachineTest {
         }
         return pcm
     }
+
     @Test
     fun testVoiceCoordinator_mutualExclusion() {
         JarvisVoiceCoordinator.forceRelease()
@@ -160,7 +362,6 @@ class WakeWordStateMachineTest {
         JarvisVoiceCoordinator.releaseMicrophone(AudioOwner.ALWAYS_ON_LISTENER)
         assertEquals(AudioOwner.NONE, JarvisVoiceCoordinator.currentOwner.value)
     }
-
 
     @Test
     fun testVoiceCoordinator_multiLevelPriorityPreemptionStack() {

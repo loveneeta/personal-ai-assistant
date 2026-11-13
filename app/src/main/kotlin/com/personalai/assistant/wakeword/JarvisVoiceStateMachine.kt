@@ -1,6 +1,8 @@
 package com.personalai.assistant.wakeword
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
@@ -8,6 +10,8 @@ import android.os.SystemClock
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
+import androidx.annotation.VisibleForTesting
+import androidx.core.content.ContextCompat
 import com.personalai.assistant.actions.AndroidActionExecutor
 import com.personalai.assistant.actions.AssistantAction
 import com.personalai.assistant.ai.ChatMessage
@@ -31,12 +35,18 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.sqrt
 
 /**
  * Robust, race-safe single audio state machine driving the hands-free
  * JARVIS assistant lifecycle for both Android and multi-platform coordination.
+ *
+ * Implements strict lifecycle guarantees:
+ * - PAUSED stops microphone capture and releases hardware resources.
+ * - STOPPED halts capture and completely frees audio resources.
+ * - Stale TTS callbacks are rejected via unique session IDs and desired-listening gating.
+ * - Thread-safe teardown guarantees that AudioRecord is never released concurrently while reading.
  */
 class JarvisVoiceStateMachine(
     private val context: Context,
@@ -75,6 +85,10 @@ class JarvisVoiceStateMachine(
 
     private var audioRecord: AudioRecord? = null
     private val isAudioCapturing = AtomicBoolean(false)
+    private val isDesiredListening = AtomicBoolean(false)
+    private val currentTtsSessionId = AtomicLong(0L)
+    private val captureLock = Any()
+
     private val fallbackSpotter = AdaptivePhoneticSpotter()
     private var lastWakeTimestamp = 0L
 
@@ -103,15 +117,19 @@ class JarvisVoiceStateMachine(
 
                     override fun onDone(utteranceId: String?) {
                         isTtsSpeaking.set(false)
-                        scope.launch {
-                            delay(400) // Grace period to avoid self-speech echo
-                            transitionTo(JarvisAudioState.WAKE_LISTENING)
-                        }
+                        handleTtsCompletion(utteranceId)
                     }
 
+                    @Deprecated("Deprecated in Java")
+                    @Suppress("DEPRECATION")
                     override fun onError(utteranceId: String?) {
                         isTtsSpeaking.set(false)
-                        scope.launch { transitionTo(JarvisAudioState.WAKE_LISTENING) }
+                        handleTtsCompletion(utteranceId)
+                    }
+
+                    override fun onError(utteranceId: String?, errorCode: Int) {
+                        isTtsSpeaking.set(false)
+                        handleTtsCompletion(utteranceId)
                     }
                 })
             }
@@ -121,7 +139,12 @@ class JarvisVoiceStateMachine(
     @Synchronized
     fun startHandsFree(wakeWord: String = "Jarvis") {
         configuredWakeWord = wakeWord
-        if (_currentState.value == JarvisAudioState.WAKE_LISTENING) return
+        isDesiredListening.set(true)
+
+        if (_currentState.value == JarvisAudioState.WAKE_LISTENING && isAudioCapturing.get()) {
+            Log.d(TAG, "Already active in WAKE_LISTENING")
+            return
+        }
 
         transitionTo(JarvisAudioState.STARTING)
         val ready = wakeWordEngine.initialize(configuredWakeWord, 0.7f)
@@ -133,54 +156,177 @@ class JarvisVoiceStateMachine(
 
     @Synchronized
     fun pauseHandsFree() {
-        transitionTo(JarvisAudioState.PAUSED)
+        Log.i(TAG, "Pausing hands-free listening")
+        isDesiredListening.set(false)
+        currentTtsSessionId.incrementAndGet()
         stopTts()
+        stopAudioLoop()
+        transitionTo(JarvisAudioState.PAUSED)
     }
 
     @Synchronized
     fun resumeHandsFree() {
-        if (_currentState.value == JarvisAudioState.PAUSED) {
-            transitionTo(JarvisAudioState.WAKE_LISTENING)
+        Log.i(TAG, "Resuming hands-free listening from state ${_currentState.value}")
+        if (_currentState.value != JarvisAudioState.PAUSED) {
+            Log.d(TAG, "resumeHandsFree called when not in PAUSED state (${_currentState.value}), ignoring")
+            return
         }
+        isDesiredListening.set(true)
+        startAudioLoop()
     }
 
     @Synchronized
     fun stopHandsFree() {
-        transitionTo(JarvisAudioState.STOPPED)
-        stopAudioLoop()
+        Log.i(TAG, "Stopping hands-free listening")
+        isDesiredListening.set(false)
+        currentTtsSessionId.incrementAndGet()
         stopTts()
+        stopAudioLoop()
+        transitionTo(JarvisAudioState.STOPPED)
         transitionTo(JarvisAudioState.IDLE_DISABLED)
     }
 
     fun interruptSpeech() {
         if (_currentState.value == JarvisAudioState.SPEAKING) {
             stopTts()
-            transitionTo(JarvisAudioState.WAKE_LISTENING)
+            currentTtsSessionId.incrementAndGet()
+            if (isDesiredListening.get()) {
+                transitionTo(JarvisAudioState.WAKE_LISTENING)
+            } else {
+                transitionTo(JarvisAudioState.PAUSED)
+            }
+        }
+    }
+
+    fun isCapturing(): Boolean = isAudioCapturing.get()
+
+    fun isDesiredListening(): Boolean = isDesiredListening.get()
+
+    fun getCurrentTtsSessionId(): Long = currentTtsSessionId.get()
+
+    @VisibleForTesting
+    internal fun simulateSpeakingState(sessionId: Long? = null): Long {
+        val id = sessionId ?: currentTtsSessionId.incrementAndGet()
+        if (sessionId != null) {
+            currentTtsSessionId.set(sessionId)
+        }
+        isDesiredListening.set(true)
+        isTtsSpeaking.set(true)
+        transitionTo(JarvisAudioState.SPEAKING)
+        return id
+    }
+
+    @VisibleForTesting
+    internal fun handleTtsCompletion(utteranceId: String?, skipDelay: Boolean = false): Job? {
+        val currentId = currentTtsSessionId.get()
+        val expectedId = "JARVIS_RESPONSE_$currentId"
+        if (utteranceId != expectedId) {
+            Log.d(TAG, "Rejecting stale TTS callback: received '$utteranceId', expected '$expectedId'")
+            return null
+        }
+
+        return scope.launch {
+            if (!skipDelay) {
+                delay(400) // Grace period to avoid self-speech echo
+            }
+            synchronized(this@JarvisVoiceStateMachine) {
+                if (utteranceId == "JARVIS_RESPONSE_${currentTtsSessionId.get()}" &&
+                    isDesiredListening.get() &&
+                    _currentState.value == JarvisAudioState.SPEAKING
+                ) {
+                    if (isAudioCapturing.get()) {
+                        transitionTo(JarvisAudioState.WAKE_LISTENING)
+                    } else {
+                        startAudioLoop()
+                    }
+                } else {
+                    Log.d(TAG, "Ignoring TTS completion: desiredListening=${isDesiredListening.get()}, state=${_currentState.value}")
+                }
+            }
         }
     }
 
     private fun startAudioLoop() {
-        if (isAudioCapturing.get()) return
+        synchronized(captureLock) {
+            if (isAudioCapturing.get()) {
+                Log.d(TAG, "Audio capture loop already active, ignoring duplicate start request")
+                return
+            }
 
-        val minBufSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT)
-        val bufferSize = Math.max(minBufSize * 2, 4096)
+            // Check microphone permission
+            if (ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.RECORD_AUDIO
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                Log.e(TAG, "Microphone permission RECORD_AUDIO not granted or revoked")
+                JarvisVoiceCoordinator.releaseMicrophone(AudioOwner.ALWAYS_ON_LISTENER)
+                transitionTo(JarvisAudioState.PERMISSION_DENIED)
+                return
+            }
 
-        try {
-            audioRecord = AudioRecord(
-                MediaRecorder.AudioSource.MIC,
-                SAMPLE_RATE,
-                CHANNEL_CONFIG,
-                AUDIO_FORMAT,
-                bufferSize
-            )
+            // Coordinate microphone access to prevent hardware collision
+            if (!JarvisVoiceCoordinator.requestMicrophone(AudioOwner.ALWAYS_ON_LISTENER)) {
+                Log.w(TAG, "Cannot start audio capture: mic owned by ${JarvisVoiceCoordinator.currentOwner.value}")
+                transitionTo(JarvisAudioState.PAUSED)
+                return
+            }
 
-            if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
-                Log.e(TAG, "AudioRecord failed initialization")
+            val minBufSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT)
+            if (minBufSize <= 0) {
+                Log.e(TAG, "Invalid AudioRecord minBufferSize: $minBufSize")
+                JarvisVoiceCoordinator.releaseMicrophone(AudioOwner.ALWAYS_ON_LISTENER)
+                transitionTo(JarvisAudioState.ERROR)
+                return
+            }
+            val bufferSize = Math.max(minBufSize * 2, 4096)
+
+            val record: AudioRecord
+            try {
+                record = AudioRecord(
+                    MediaRecorder.AudioSource.MIC,
+                    SAMPLE_RATE,
+                    CHANNEL_CONFIG,
+                    AUDIO_FORMAT,
+                    bufferSize
+                )
+            } catch (e: SecurityException) {
+                Log.e(TAG, "SecurityException creating AudioRecord: ${e.message}")
+                JarvisVoiceCoordinator.releaseMicrophone(AudioOwner.ALWAYS_ON_LISTENER)
+                transitionTo(JarvisAudioState.PERMISSION_DENIED)
+                return
+            } catch (e: Throwable) {
+                Log.e(TAG, "AudioRecord creation failed: ${e.message}", e)
+                JarvisVoiceCoordinator.releaseMicrophone(AudioOwner.ALWAYS_ON_LISTENER)
                 transitionTo(JarvisAudioState.ERROR)
                 return
             }
 
-            audioRecord?.startRecording()
+            if (record.state != AudioRecord.STATE_INITIALIZED) {
+                Log.e(TAG, "AudioRecord failed initialization (state != STATE_INITIALIZED)")
+                try { record.release() } catch (ignored: Exception) {}
+                JarvisVoiceCoordinator.releaseMicrophone(AudioOwner.ALWAYS_ON_LISTENER)
+                transitionTo(JarvisAudioState.ERROR)
+                return
+            }
+
+            try {
+                record.startRecording()
+            } catch (e: SecurityException) {
+                Log.e(TAG, "SecurityException on startRecording: ${e.message}")
+                try { record.release() } catch (ignored: Exception) {}
+                JarvisVoiceCoordinator.releaseMicrophone(AudioOwner.ALWAYS_ON_LISTENER)
+                transitionTo(JarvisAudioState.PERMISSION_DENIED)
+                return
+            } catch (e: Throwable) {
+                Log.e(TAG, "Failed to startRecording: ${e.message}", e)
+                try { record.release() } catch (ignored: Exception) {}
+                JarvisVoiceCoordinator.releaseMicrophone(AudioOwner.ALWAYS_ON_LISTENER)
+                transitionTo(JarvisAudioState.ERROR)
+                return
+            }
+
+            audioRecord = record
             isAudioCapturing.set(true)
             transitionTo(JarvisAudioState.WAKE_LISTENING)
 
@@ -193,103 +339,125 @@ class JarvisVoiceStateMachine(
                 var hasSpeechStarted = false
                 var silentSamplesAfterSpeech = 0
 
-                while (isActive && isAudioCapturing.get()) {
-                    val read = audioRecord?.read(shortBuffer, 0, shortBuffer.size) ?: -1
-                    if (read <= 0) {
-                        delay(20)
-                        continue
-                    }
+                try {
+                    while (isActive && isAudioCapturing.get()) {
+                        val currentRecord = audioRecord ?: break
+                        val read = try {
+                            currentRecord.read(shortBuffer, 0, shortBuffer.size)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Exception reading AudioRecord: ${e.message}")
+                            -1
+                        }
 
-                    // Calculate RMS sound level for visualizer
-                    var sumSquares = 0.0
-                    for (i in 0 until read) {
-                        sumSquares += shortBuffer[i].toDouble() * shortBuffer[i].toDouble()
-                    }
-                    val rms = sqrt(sumSquares / read).toFloat()
-                    _soundLevel.value = (rms / 32768f).coerceIn(0f, 1f)
+                        if (!isAudioCapturing.get() || !isActive) break
 
-                    // SELF-FEEDBACK PROTECTION: Never process wake words while TTS is speaking
-                    if (isTtsSpeaking.get() || _currentState.value == JarvisAudioState.SPEAKING) {
-                        delay(50)
-                        continue
-                    }
-
-                    when (_currentState.value) {
-                        JarvisAudioState.WAKE_LISTENING -> {
-                            // Continuously record to rolling pre-buffer
-                            for (i in 0 until read) {
-                                preBuffer[preBufferWriteIdx % preBuffer.size] = shortBuffer[i]
-                                preBufferWriteIdx++
+                        if (read <= 0) {
+                            if (read == AudioRecord.ERROR_INVALID_OPERATION || read == AudioRecord.ERROR_BAD_VALUE) {
+                                if (!isAudioCapturing.get()) break
                             }
+                            delay(20)
+                            continue
+                        }
 
-                            val detected = if (wakeWordEngine.isReady) {
-                                wakeWordEngine.processPcmChunk(shortBuffer, read)
-                            } else {
-                                fallbackSpotter.processPcmChunk(shortBuffer, read)
-                            }
-                            val now = SystemClock.elapsedRealtime()
+                        // Calculate RMS sound level for visualizer
+                        var sumSquares = 0.0
+                        for (i in 0 until read) {
+                            sumSquares += shortBuffer[i].toDouble() * shortBuffer[i].toDouble()
+                        }
+                        val rms = sqrt(sumSquares / read).toFloat()
+                        _soundLevel.value = (rms / 32768f).coerceIn(0f, 1f)
 
-                            if (detected && (now - lastWakeTimestamp) > WAKE_DEBOUNCE_MS) {
-                                lastWakeTimestamp = now
-                                // Silent haptic pulse acknowledgement
-                                try {
-                                    val vibrator = context.getSystemService(android.content.Context.VIBRATOR_SERVICE) as? android.os.Vibrator
-                                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                                        vibrator?.vibrate(android.os.VibrationEffect.createOneShot(120, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
-                                    } else {
-                                        @Suppress("DEPRECATION")
-                                        vibrator?.vibrate(120)
-                                    }
-                                } catch (e: Exception) {}
-                                handleWakeWordDetected(shortBuffer, read)
-                                commandPcmAccumulator.clear()
-                                // Prepend rolling pre-buffer to capture utterance onset cleanly
-                                val preLen = minOf(preBufferWriteIdx, preBuffer.size)
-                                val startOffset = if (preBufferWriteIdx > preBuffer.size) preBufferWriteIdx % preBuffer.size else 0
-                                for (i in 0 until preLen) {
-                                    commandPcmAccumulator.add(preBuffer[(startOffset + i) % preBuffer.size])
+                        // SELF-FEEDBACK PROTECTION: Never process wake words while TTS is speaking
+                        if (isTtsSpeaking.get() || _currentState.value == JarvisAudioState.SPEAKING) {
+                            delay(50)
+                            continue
+                        }
+
+                        when (_currentState.value) {
+                            JarvisAudioState.WAKE_LISTENING -> {
+                                for (i in 0 until read) {
+                                    preBuffer[preBufferWriteIdx % preBuffer.size] = shortBuffer[i]
+                                    preBufferWriteIdx++
                                 }
-                                hasSpeechStarted = false
-                                silentSamplesAfterSpeech = 0
+
+                                val detected = if (wakeWordEngine.isReady) {
+                                    wakeWordEngine.processPcmChunk(shortBuffer, read)
+                                } else {
+                                    fallbackSpotter.processPcmChunk(shortBuffer, read)
+                                }
+                                val now = SystemClock.elapsedRealtime()
+
+                                if (detected && (now - lastWakeTimestamp) > WAKE_DEBOUNCE_MS) {
+                                    lastWakeTimestamp = now
+                                    try {
+                                        @Suppress("DEPRECATION")
+                                        val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+                                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                                            vibrator?.vibrate(android.os.VibrationEffect.createOneShot(120, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+                                        } else {
+                                            @Suppress("DEPRECATION")
+                                            vibrator?.vibrate(120)
+                                        }
+                                    } catch (e: Exception) {}
+                                    handleWakeWordDetected(shortBuffer, read)
+                                    commandPcmAccumulator.clear()
+                                    val preLen = minOf(preBufferWriteIdx, preBuffer.size)
+                                    val startOffset = if (preBufferWriteIdx > preBuffer.size) preBufferWriteIdx % preBuffer.size else 0
+                                    for (i in 0 until preLen) {
+                                        commandPcmAccumulator.add(preBuffer[(startOffset + i) % preBuffer.size])
+                                    }
+                                    hasSpeechStarted = false
+                                    silentSamplesAfterSpeech = 0
+                                }
                             }
-                        }
 
-                        JarvisAudioState.COMMAND_LISTENING -> {
-                            for (i in 0 until read) commandPcmAccumulator.add(shortBuffer[i])
+                            JarvisAudioState.COMMAND_LISTENING -> {
+                                for (i in 0 until read) commandPcmAccumulator.add(shortBuffer[i])
 
-                            if (rms >= SILENCE_THRESHOLD_RMS) {
-                                hasSpeechStarted = true
-                                silentSamplesAfterSpeech = 0
-                            } else if (hasSpeechStarted) {
-                                silentSamplesAfterSpeech += read
+                                if (rms >= SILENCE_THRESHOLD_RMS) {
+                                    hasSpeechStarted = true
+                                    silentSamplesAfterSpeech = 0
+                                } else if (hasSpeechStarted) {
+                                    silentSamplesAfterSpeech += read
+                                }
+
+                                val isNaturalPause = hasSpeechStarted && silentSamplesAfterSpeech >= (SAMPLE_RATE * 1.4)
+                                val isMaxUtterance = commandPcmAccumulator.size >= (SAMPLE_RATE * 9)
+
+                                if (isNaturalPause || isMaxUtterance) {
+                                    finishCommandListening(ArrayList(commandPcmAccumulator))
+                                    commandPcmAccumulator.clear()
+                                    hasSpeechStarted = false
+                                    silentSamplesAfterSpeech = 0
+                                }
                             }
 
-                            // Natural pause endpointing:
-                            // If speech has occurred and is followed by 1.4s of natural breath pause,
-                            // or if total command length reached 9 seconds, complete utterance.
-                            val isNaturalPause = hasSpeechStarted && silentSamplesAfterSpeech >= (SAMPLE_RATE * 1.4)
-                            val isMaxUtterance = commandPcmAccumulator.size >= (SAMPLE_RATE * 9)
-
-                            if (isNaturalPause || isMaxUtterance) {
-                                finishCommandListening(ArrayList(commandPcmAccumulator))
-                                commandPcmAccumulator.clear()
-                                hasSpeechStarted = false
-                                silentSamplesAfterSpeech = 0
+                            else -> {
+                                // Other states do not process raw audio stream
                             }
-                        }
-
-                        else -> {
-                            // Other states do not process raw audio stream
                         }
                     }
+                } finally {
+                    // Guaranteed thread-safe cleanup on IO coroutine termination
+                    _soundLevel.value = 0f
+                    try {
+                        if (record.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                            record.stop()
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error stopping record in finally: ${e.message}")
+                    }
+                    try {
+                        record.release()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error releasing record in finally: ${e.message}")
+                    }
+                    if (audioRecord == record) {
+                        audioRecord = null
+                    }
+                    isAudioCapturing.set(false)
                 }
             }
-        } catch (e: SecurityException) {
-            Log.e(TAG, "Microphone permission denied: ${e.message}")
-            transitionTo(JarvisAudioState.PERMISSION_DENIED)
-        } catch (e: Throwable) {
-            Log.e(TAG, "Exception in audio capture loop: ${e.message}", e)
-            transitionTo(JarvisAudioState.ERROR)
         }
     }
 
@@ -312,7 +480,9 @@ class JarvisVoiceStateMachine(
                         status = "REJECTED_SPEAKER"
                     )
                     delay(1200)
-                    transitionTo(JarvisAudioState.WAKE_LISTENING)
+                    if (isDesiredListening.get() && _currentState.value == JarvisAudioState.VERIFYING_SPEAKER) {
+                        transitionTo(JarvisAudioState.WAKE_LISTENING)
+                    }
                     return@launch
                 }
             }
@@ -327,7 +497,7 @@ class JarvisVoiceStateMachine(
         commandTimeoutJob?.cancel()
         commandTimeoutJob = scope.launch {
             delay(commandTimeoutMs)
-            if (_currentState.value == JarvisAudioState.COMMAND_LISTENING) {
+            if (_currentState.value == JarvisAudioState.COMMAND_LISTENING && isDesiredListening.get()) {
                 Log.i(TAG, "Command listening timed out without speech.")
                 logWakeEvent(
                     wakeWord = configuredWakeWord,
@@ -433,10 +603,12 @@ class JarvisVoiceStateMachine(
     }
 
     private fun speakResponse(text: String) {
+        val sessionId = currentTtsSessionId.incrementAndGet()
+        val utteranceId = "JARVIS_RESPONSE_$sessionId"
         transitionTo(JarvisAudioState.SPEAKING)
         isTtsSpeaking.set(true)
         val cleanSpeech = text.replace(Regex("[#*`_]"), "").take(400)
-        textToSpeech?.speak(cleanSpeech, TextToSpeech.QUEUE_FLUSH, null, "JARVIS_RESPONSE")
+        textToSpeech?.speak(cleanSpeech, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
     }
 
     private fun stopTts() {
@@ -449,17 +621,41 @@ class JarvisVoiceStateMachine(
     }
 
     private fun stopAudioLoop() {
-        isAudioCapturing.set(false)
-        loopJob?.cancel()
-        commandTimeoutJob?.cancel()
+        synchronized(captureLock) {
+            isAudioCapturing.set(false)
+            commandTimeoutJob?.cancel()
+            commandTimeoutJob = null
 
-        try {
-            audioRecord?.stop()
-            audioRecord?.release()
-        } catch (e: Exception) {
-            Log.e(TAG, "Error stopping audioRecord: ${e.message}")
+            val record = audioRecord
+            audioRecord = null
+
+            if (record != null) {
+                try {
+                    // Calling stop unblocks any blocking read() call immediately
+                    if (record.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                        record.stop()
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error stopping AudioRecord: ${e.message}")
+                }
+            }
+
+            loopJob?.cancel()
+            val runningJob = loopJob
+            loopJob = null
+
+            // If coroutine was not active, release record directly
+            if (runningJob == null && record != null) {
+                try {
+                    record.release()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error releasing AudioRecord directly: ${e.message}")
+                }
+            }
+
+            JarvisVoiceCoordinator.releaseMicrophone(AudioOwner.ALWAYS_ON_LISTENER)
+            _soundLevel.value = 0f
         }
-        audioRecord = null
     }
 
     private suspend fun logWakeEvent(
@@ -501,6 +697,7 @@ class JarvisVoiceStateMachine(
         }
         textToSpeech = null
     }
+
     /**
      * Decodes 16kHz PCM audio on-device using the installed Vosk Kaldi speech model.
      * Preserves mixed Hindi and English without cloud dependencies.
@@ -536,5 +733,4 @@ class JarvisVoiceStateMachine(
             ""
         }
     }
-
 }

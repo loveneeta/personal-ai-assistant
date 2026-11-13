@@ -1,19 +1,21 @@
-<?xml version="1.0" encoding="utf-8"?><!--
-   Sample data extraction rules file; uncomment and customize as necessary.
-   See https://developer.android.com/about/versions/12/backup-restore#xml-changes
-   for details.
--->
+<?xml version="1.0" encoding="utf-8"?>
 <data-extraction-rules>
     <cloud-backup>
-        <!-- TODO: Use <include> and <exclude> to control what is backed up.
-        <include .../>
-        <exclude .../>
-        -->
+        <!-- Preserve user settings in cloud backups -->
+        <include domain="sharedpref" path="." />
+        <!-- Exclude sensitive personal audio recordings and raw database from cloud backups -->
+        <exclude domain="database" path="personal_ai.db" />
+        <exclude domain="database" path="personal_ai.db-shm" />
+        <exclude domain="database" path="personal_ai.db-wal" />
+        <exclude domain="file" path="recordings" />
     </cloud-backup>
-    <!--
     <device-transfer>
-        <include .../>
-        <exclude .../>
+        <!-- Include preferences and database on direct encrypted device-to-device migration -->
+        <include domain="sharedpref" path="." />
+        <include domain="database" path="personal_ai.db" />
+        <include domain="database" path="personal_ai.db-shm" />
+        <include domain="database" path="personal_ai.db-wal" />
+        <!-- Exclude bulky raw audio recordings to prevent migration timeouts -->
+        <exclude domain="file" path="recordings" />
     </device-transfer>
-    -->
 </data-extraction-rules>
