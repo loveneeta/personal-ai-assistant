@@ -1,0 +1,3 @@
+# J.A.R.V.I.S. Windows Desktop Assistant Dependencies
+sounddevice>=0.4.6
+numpy>=1.24.0
