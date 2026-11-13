@@ -385,4 +385,246 @@ class BackupManagerTest {
         assertEquals(1, specialResults.size)
         assertTrue(specialResults[0].text.contains("zero rupees"))
     }
+
+    @Test
+    fun test8_BackupWithMultipleAudioRecordings_packagesAudioAndRemapsPaths() = runTest {
+        // Create 2 physical audio files
+        val audioFile1 = tempFolder.newFile("sample_voice_1.wav").apply {
+            writeBytes("RIFFdummywavecontentforrecording1".toByteArray())
+        }
+        val audioFile2 = tempFolder.newFile("sample_voice_2.wav").apply {
+            writeBytes("RIFFdummywavecontentforrecording2_longer_sample".toByteArray())
+        }
+
+        val rec1Id = repository.insertRecording(
+            RecordingEntity(
+                title = "Meeting Audio 1",
+                filePath = audioFile1.absolutePath,
+                startTimestamp = 1730000000000L,
+                fileSizeBytes = audioFile1.length(),
+                status = RecordingStatus.COMPLETED,
+                processingStatus = ProcessingStatus.COMPLETED
+            )
+        )
+        val rec2Id = repository.insertRecording(
+            RecordingEntity(
+                title = "Meeting Audio 2",
+                filePath = audioFile2.absolutePath,
+                startTimestamp = 1730005000000L,
+                fileSizeBytes = audioFile2.length(),
+                status = RecordingStatus.COMPLETED,
+                processingStatus = ProcessingStatus.COMPLETED
+            )
+        )
+
+        val passphrase = "SecurePassword123!"
+        val backupResult = BackupManager.createEncryptedBackup(context, repository, passphrase)
+        assertTrue(backupResult.success)
+        val backupFile = backupResult.file!!
+        assertTrue(backupFile.exists())
+        assertTrue("Backup should mention audio files included", backupResult.message.contains("2 audio files"))
+
+        // Simulate new device: clear database and delete original temp files
+        repository.clearAllData()
+        audioFile1.delete()
+        audioFile2.delete()
+        assertTrue(repository.getAllRecordings().isEmpty())
+
+        // Restore onto new device
+        val restoreResult = BackupManager.restoreEncryptedBackup(context, repository, backupFile, passphrase)
+        assertTrue(restoreResult.success)
+
+        val restoredRecs = repository.getAllRecordings()
+        assertEquals(2, restoredRecs.size)
+
+        for (rec in restoredRecs) {
+            assertTrue("File path must be populated", rec.filePath.isNotBlank())
+            val fileOnDisk = File(rec.filePath)
+            assertTrue("Restored audio file must physically exist at remapped path: ${rec.filePath}", fileOnDisk.exists())
+            assertTrue("Audio file must have content", fileOnDisk.length() > 0)
+        }
+    }
+
+    @Test
+    fun test9_BackupWithoutAudio_succeedsGracefully() = runTest {
+        repository.insertRecording(
+            RecordingEntity(
+                title = "Text-only Record",
+                filePath = "",
+                startTimestamp = 1000L,
+                status = RecordingStatus.COMPLETED,
+                processingStatus = ProcessingStatus.COMPLETED
+            )
+        )
+
+        val backupResult = BackupManager.createEncryptedBackup(context, repository, "SecurePassword123!")
+        assertTrue(backupResult.success)
+
+        repository.clearAllData()
+        val restoreResult = BackupManager.restoreEncryptedBackup(context, repository, backupResult.file!!, "SecurePassword123!")
+        assertTrue(restoreResult.success)
+
+        val restored = repository.getAllRecordings()
+        assertEquals(1, restored.size)
+        assertEquals("Text-only Record", restored[0].title)
+        assertEquals("", restored[0].filePath)
+    }
+
+    @Test
+    fun test10_CrossDeviceRestore_remapsToDestinationStorage() = runTest {
+        val fakeOldDeviceAudio = tempFolder.newFile("device_a_audio.wav").apply {
+            writeBytes("Device A raw audio data".toByteArray())
+        }
+        repository.insertRecording(
+            RecordingEntity(
+                title = "Device A Session",
+                filePath = fakeOldDeviceAudio.absolutePath,
+                startTimestamp = 2000L,
+                status = RecordingStatus.COMPLETED
+            )
+        )
+
+        val backupResult = BackupManager.createEncryptedBackup(context, repository, "SecurePassword123!")
+        assertTrue(backupResult.success)
+
+        // Clear original
+        repository.clearAllData()
+
+        val restoreResult = BackupManager.restoreEncryptedBackup(context, repository, backupResult.file!!, "SecurePassword123!")
+        assertTrue(restoreResult.success)
+
+        val restored = repository.getAllRecordings().first()
+        assertFalse("Restored path should not equal old temp path", restored.filePath == fakeOldDeviceAudio.absolutePath)
+        assertTrue("Restored path should be within context filesDir", restored.filePath.startsWith(context.filesDir.absolutePath))
+        assertTrue(File(restored.filePath).exists())
+    }
+
+    @Test
+    fun test11_ModifiedArchive_checksumMismatchRejected() = runTest {
+        val audio = tempFolder.newFile("check_audio.wav").apply { writeBytes("valid audio".toByteArray()) }
+        repository.insertRecording(RecordingEntity(title = "Tamper DB", filePath = audio.absolutePath, startTimestamp = 3000L))
+
+        val backupResult = BackupManager.createEncryptedBackup(context, repository, "SecurePassword123!")
+        val backupFile = backupResult.file!!
+
+        // Tamper with ciphertext by altering bytes inside
+        val bytes = backupFile.readBytes()
+        bytes[bytes.lastIndex - 10] = (bytes[bytes.lastIndex - 10].toInt() xor 0x55).toByte()
+        backupFile.writeBytes(bytes)
+
+        val restoreResult = BackupManager.restoreEncryptedBackup(context, repository, backupFile, "SecurePassword123!")
+        assertFalse("Tampered backup must be rejected", restoreResult.success)
+    }
+
+    @Test
+    fun test12_MergeVsReplaceStrategy() = runTest {
+        // Step 1: Initial state has Item A
+        repository.insertTask(TaskEntity(title = "Item A", status = TaskStatus.PENDING))
+        val backupResult = BackupManager.createEncryptedBackup(context, repository, "SecurePassword123!")
+        val backupFile = backupResult.file!!
+
+        // Step 2: Database receives Item B while backup exists
+        repository.insertTask(TaskEntity(title = "Item B", status = TaskStatus.PENDING))
+        assertEquals(2, repository.getAllTasks().size)
+
+        // Step 3: Restore with MERGE strategy
+        val mergeResult = BackupManager.restoreEncryptedBackup(
+            context, repository, backupFile, "SecurePassword123!",
+            strategy = RestoreStrategy.MERGE
+        )
+        assertTrue(mergeResult.success)
+        val tasksAfterMerge = repository.getAllTasks()
+        // Item B preserved, Item A merged
+        assertTrue(tasksAfterMerge.any { it.title == "Item B" })
+        assertTrue(tasksAfterMerge.any { it.title == "Item A" })
+
+        // Step 4: Restore with REPLACE strategy
+        val replaceResult = BackupManager.restoreEncryptedBackup(
+            context, repository, backupFile, "SecurePassword123!",
+            strategy = RestoreStrategy.REPLACE
+        )
+        assertTrue(replaceResult.success)
+        val tasksAfterReplace = repository.getAllTasks()
+        // Only Item A from backup should exist, Item B replaced
+        assertEquals(1, tasksAfterReplace.size)
+        assertEquals("Item A", tasksAfterReplace[0].title)
+    }
+
+    @Test
+    fun test13_MaliciousZipSlip_detectedAndRejected() = runTest {
+        val zipBaos = java.io.ByteArrayOutputStream()
+        java.util.zip.ZipOutputStream(zipBaos).use { zos ->
+            zos.putNextEntry(java.util.zip.ZipEntry("manifest.json"))
+            zos.write("{}".toByteArray())
+            zos.closeEntry()
+
+            zos.putNextEntry(java.util.zip.ZipEntry("../evil_slip.txt"))
+            zos.write("malicious payload".toByteArray())
+            zos.closeEntry()
+        }
+
+        val plainZip = zipBaos.toByteArray()
+        val random = SecureRandom()
+        val salt = ByteArray(16).apply { random.nextBytes(this) }
+        val iv = ByteArray(12).apply { random.nextBytes(this) }
+
+        val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+        val spec = PBEKeySpec("SecurePassword123!".toCharArray(), salt, 65536, 256)
+        val secretKey = SecretKeySpec(factory.generateSecret(spec).encoded, "AES")
+
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, secretKey, GCMParameterSpec(128, iv))
+        val aad = java.nio.ByteBuffer.allocate(4 + 4 + 16)
+            .put(BackupManager.MAGIC_HEADER)
+            .putInt(BackupManager.BACKUP_VERSION)
+            .put(salt)
+            .array()
+        cipher.updateAAD(aad)
+        val cipherText = cipher.doFinal(plainZip)
+
+        val evilBackupFile = tempFolder.newFile("evil_backup.enc").apply {
+            outputStream().use { fos ->
+                fos.write(BackupManager.MAGIC_HEADER)
+                fos.write(java.nio.ByteBuffer.allocate(4).putInt(BackupManager.BACKUP_VERSION).array())
+                fos.write(salt)
+                fos.write(iv)
+                fos.write(cipherText)
+            }
+        }
+
+        val restoreResult = BackupManager.restoreEncryptedBackup(context, repository, evilBackupFile, "SecurePassword123!")
+        assertFalse("Malicious Zip Slip archive must be rejected", restoreResult.success)
+        assertTrue(restoreResult.message.contains("path traversal") || restoreResult.message.contains("failed"))
+    }
+
+    @Test
+    fun test14_OpenJarvisApiKey_keystoreEncryptionAndDisconnect() {
+        val testKey = "nvapi-prod-super-secret-key-98765"
+
+        // 1. Store API key
+        com.personalai.assistant.ai.OpenJarvisManager.setApiKey(context, testKey)
+        com.personalai.assistant.ai.OpenJarvisManager.setEnabled(context, true)
+
+        // 2. Verify SharedPreferences NEVER holds plaintext API key
+        val prefs = context.getSharedPreferences("openjarvis_prefs", Context.MODE_PRIVATE)
+        val rawStoredKey = prefs.getString("openjarvis_api_key", null)
+        assertTrue("Plaintext API key must not exist in SharedPreferences", rawStoredKey.isNullOrEmpty())
+
+        // 3. Verify retrieval from secure vault
+        val retrievedKey = com.personalai.assistant.ai.OpenJarvisManager.getApiKey(context)
+        assertEquals("Retrieved API key must match stored key", testKey, retrievedKey)
+        assertTrue(com.personalai.assistant.ai.OpenJarvisManager.isEnabled(context))
+
+        // 4. Verify explicit disconnect clears key and disables integration
+        com.personalai.assistant.ai.OpenJarvisManager.disconnect(context)
+        assertFalse(com.personalai.assistant.ai.OpenJarvisManager.isEnabled(context))
+        assertEquals("", com.personalai.assistant.ai.OpenJarvisManager.getApiKey(context))
+    }
+
+    @Test
+    fun test15_PassphraseValidation_enforcesMinimumLength() = runTest {
+        val shortResult = BackupManager.createEncryptedBackup(context, repository, "short")
+        assertFalse(shortResult.success)
+        assertTrue(shortResult.message.contains("at least 8 characters"))
+    }
 }

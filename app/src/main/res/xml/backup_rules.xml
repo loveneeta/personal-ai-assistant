@@ -8,4 +8,7 @@
     <exclude domain="database" path="personal_ai.db-shm" />
     <exclude domain="database" path="personal_ai.db-wal" />
     <exclude domain="file" path="recordings" />
+
+    <!-- Exclude secure credential vault from all backups -->
+    <exclude domain="sharedpref" path="secure_credentials_vault.xml" />
 </full-backup-content>

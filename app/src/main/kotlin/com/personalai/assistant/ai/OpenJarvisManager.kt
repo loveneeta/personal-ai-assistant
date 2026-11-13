@@ -1,6 +1,7 @@
 package com.personalai.assistant.ai
 
 import android.content.Context
+import com.personalai.assistant.security.SecureCredentialStorage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -43,14 +44,43 @@ object OpenJarvisManager {
         prefs.edit().putString(KEY_SERVER_URL, normalized).apply()
     }
 
+    /**
+     * Retrieve API key securely from Android Keystore encrypted vault.
+     * Automatically migrates legacy plaintext keys if found.
+     */
     fun getApiKey(context: Context): String {
+        val secureKey = SecureCredentialStorage.getSecret(context, KEY_API_KEY)
+        if (secureKey.isNotEmpty()) return secureKey
+
+        // Migrate legacy plaintext key if present
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        return prefs.getString(KEY_API_KEY, "")?.trim() ?: ""
+        val legacyKey = prefs.getString(KEY_API_KEY, "")?.trim() ?: ""
+        if (legacyKey.isNotEmpty()) {
+            SecureCredentialStorage.storeSecret(context, KEY_API_KEY, legacyKey)
+            prefs.edit().remove(KEY_API_KEY).apply()
+            return legacyKey
+        }
+        return ""
     }
 
+    /**
+     * Store API key in hardware-backed encrypted vault and remove any plaintext copies.
+     */
     fun setApiKey(context: Context, key: String) {
+        val trimmed = key.trim()
+        SecureCredentialStorage.storeSecret(context, KEY_API_KEY, trimmed)
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit().putString(KEY_API_KEY, key.trim()).apply()
+        prefs.edit().remove(KEY_API_KEY).apply()
+    }
+
+    /**
+     * Explicitly disconnects OpenJarvis: disables integration and clears credentials.
+     */
+    fun disconnect(context: Context) {
+        setEnabled(context, false)
+        SecureCredentialStorage.clearSecret(context, KEY_API_KEY)
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().remove(KEY_API_KEY).apply()
     }
 
     fun getModel(context: Context): String {
@@ -64,7 +94,7 @@ object OpenJarvisManager {
     }
 
     /**
-     * Test connection to the OpenJarvis server.
+     * Test connection to the OpenJarvis server. Never logs API credentials.
      */
     suspend fun testConnection(context: Context): Result<String> = withContext(Dispatchers.IO) {
         val baseUrl = getServerUrl(context)
@@ -98,12 +128,17 @@ object OpenJarvisManager {
 
     /**
      * Query OpenJarvis OpenAI-compatible endpoint with optional local context.
+     * Preserves offline mode: if OpenJarvis is disabled, never transmits network data.
      */
     suspend fun query(
         context: Context,
         userPrompt: String,
         groundingContext: String = ""
     ): Result<String> = withContext(Dispatchers.IO) {
+        if (!isEnabled(context)) {
+            return@withContext Result.failure(IllegalStateException("OpenJarvis is disabled (offline mode active)."))
+        }
+
         val baseUrl = getServerUrl(context)
         val apiKey = getApiKey(context)
         val model = getModel(context)
@@ -174,12 +209,17 @@ object OpenJarvisManager {
 
     /**
      * Ingest a document or meeting transcript into OpenJarvis Knowledge store.
+     * Preserves offline mode: if OpenJarvis is disabled, does not transmit knowledge.
      */
     suspend fun syncKnowledge(
         context: Context,
         title: String,
         content: String
     ): Result<Int> = withContext(Dispatchers.IO) {
+        if (!isEnabled(context)) {
+            return@withContext Result.failure(IllegalStateException("OpenJarvis is disabled (offline mode active)."))
+        }
+
         val baseUrl = getServerUrl(context)
         val apiKey = getApiKey(context)
 

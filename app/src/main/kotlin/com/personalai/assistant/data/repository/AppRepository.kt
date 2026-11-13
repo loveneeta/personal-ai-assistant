@@ -12,6 +12,7 @@ import com.personalai.assistant.data.local.entity.TaskStatus
 import com.personalai.assistant.data.local.entity.TranscriptEntity
 import com.personalai.assistant.data.local.entity.WakeEventEntity
 import com.personalai.assistant.recording.WavWriter
+import androidx.room.withTransaction
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
@@ -22,6 +23,14 @@ class AppRepository(
     private val database: AppDatabase,
     private val context: Context
 ) {
+    val appDatabase: AppDatabase get() = database
+
+    suspend fun <R> withTransaction(block: suspend () -> R): R = withContext(Dispatchers.IO) {
+        database.withTransaction {
+            block()
+        }
+    }
+
     private val recordingDao = database.recordingDao()
     private val transcriptDao = database.transcriptDao()
     private val meetingDao = database.meetingDao()
