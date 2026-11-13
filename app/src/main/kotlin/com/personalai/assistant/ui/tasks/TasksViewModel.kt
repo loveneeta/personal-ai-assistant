@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.personalai.assistant.data.local.entity.TaskEntity
+import com.personalai.assistant.data.local.entity.TaskStatus
 import com.personalai.assistant.data.repository.AppRepository
 import com.personalai.assistant.export.ExportManager
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,8 +30,8 @@ class TasksViewModel(private val repository: AppRepository) : ViewModel() {
     val filteredTasks: StateFlow<List<TaskEntity>> = combine(allTasksFlow, _filter) { tasks, filter ->
         when (filter) {
             TaskFilter.ALL -> tasks
-            TaskFilter.PENDING -> tasks.filter { it.status != "COMPLETED" }
-            TaskFilter.COMPLETED -> tasks.filter { it.status == "COMPLETED" }
+            TaskFilter.PENDING -> tasks.filter { !it.status.isCompleted }
+            TaskFilter.COMPLETED -> tasks.filter { it.status.isCompleted }
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -38,9 +39,9 @@ class TasksViewModel(private val repository: AppRepository) : ViewModel() {
         _filter.value = filter
     }
 
-    fun toggleTaskStatus(taskId: Long, currentStatus: String) {
+    fun toggleTaskStatus(taskId: Long, currentStatus: TaskStatus) {
         viewModelScope.launch {
-            val newStatus = if (currentStatus == "COMPLETED") "PENDING" else "COMPLETED"
+            val newStatus = if (currentStatus.isCompleted) TaskStatus.PENDING else TaskStatus.COMPLETED
             repository.updateTaskStatus(taskId, newStatus)
         }
     }
@@ -50,7 +51,8 @@ class TasksViewModel(private val repository: AppRepository) : ViewModel() {
             repository.insertTask(
                 TaskEntity(
                     title = title,
-                    assignedPerson = assignee?.ifBlank { null }
+                    assignedPerson = assignee?.ifBlank { null },
+                    status = TaskStatus.PENDING
                 )
             )
         }

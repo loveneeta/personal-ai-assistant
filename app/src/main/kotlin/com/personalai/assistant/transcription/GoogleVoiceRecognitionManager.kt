@@ -9,7 +9,9 @@ import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import com.personalai.assistant.data.local.entity.ProcessingStatus
 import com.personalai.assistant.data.local.entity.RecordingEntity
+import com.personalai.assistant.data.local.entity.RecordingStatus
 import com.personalai.assistant.data.local.entity.TranscriptEntity
 import com.personalai.assistant.data.repository.AppRepository
 import com.personalai.assistant.wakeword.AudioOwner
@@ -291,10 +293,10 @@ class GoogleVoiceRecognitionManager(
             startTimestamp = sessionStartTimeMs,
             endTimestamp = now,
             durationMs = durationMs,
-            status = "COMPLETED",
+            status = RecordingStatus.COMPLETED,
             fileSizeBytes = 0L,
             mimeType = "text/transcript",
-            processingStatus = "COMPLETED"
+            processingStatus = ProcessingStatus.COMPLETED
         )
 
         val recordingId = repository.insertRecording(recordingEntity)

@@ -11,6 +11,15 @@ sealed class RecordingState {
     val isActive: Boolean
         get() = this is Recording || this is Paused || this is Finalizing
 
+    val isRecording: Boolean
+        get() = this is Recording
+
+    val isPaused: Boolean
+        get() = this is Paused
+
+    val isFinalizing: Boolean
+        get() = this is Finalizing
+
     val durationOrZero: Long
         get() = when (this) {
             is Recording -> durationMs

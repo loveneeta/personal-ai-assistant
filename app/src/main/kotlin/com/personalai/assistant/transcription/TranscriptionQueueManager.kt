@@ -2,7 +2,9 @@ package com.personalai.assistant.transcription
 
 import android.content.Context
 import android.util.Log
+import com.personalai.assistant.data.local.entity.ProcessingStatus
 import com.personalai.assistant.data.local.entity.RecordingEntity
+import com.personalai.assistant.data.local.entity.RecordingStatus
 import com.personalai.assistant.data.local.entity.TranscriptEntity
 import com.personalai.assistant.data.repository.AppRepository
 import com.personalai.assistant.transcription.models.ModelManager
@@ -55,11 +57,11 @@ class TranscriptionQueueManager(
 
                 // Prevent interrupted sessions from remaining stuck in PROCESSING permanently
                 for (rec in allRecordings) {
-                    if (rec.processingStatus == "PROCESSING") {
+                    if (rec.processingStatus == ProcessingStatus.PROCESSING) {
                         Log.i(TAG, "Reconciling interrupted recording #${rec.id} from PROCESSING to PENDING")
                         repository.updateRecording(
                             rec.copy(
-                                processingStatus = "PENDING",
+                                processingStatus = ProcessingStatus.PENDING,
                                 errorDetails = "Processing was interrupted by application shutdown. Queued for retry.",
                                 updatedAt = System.currentTimeMillis()
                             )
@@ -69,8 +71,8 @@ class TranscriptionQueueManager(
 
                 // Filter valid items ready for transcription
                 val pending = allRecordings.filter {
-                    (it.processingStatus == "PENDING" || it.processingStatus == "PROCESSING") &&
-                            (it.status == "COMPLETED" || it.status == "INTERRUPTED")
+                    (it.processingStatus == ProcessingStatus.PENDING || it.processingStatus == ProcessingStatus.PROCESSING) &&
+                            (it.status == RecordingStatus.COMPLETED || it.status == RecordingStatus.INTERRUPTED)
                 }
 
                 for (rec in pending) {
@@ -106,7 +108,7 @@ class TranscriptionQueueManager(
         if (rec != null) {
             repository.updateRecording(
                 rec.copy(
-                    processingStatus = "PENDING",
+                    processingStatus = ProcessingStatus.PENDING,
                     errorDetails = null,
                     updatedAt = System.currentTimeMillis()
                 )
@@ -130,7 +132,7 @@ class TranscriptionQueueManager(
                 val errorMsg = "Audio file is missing or contains no data"
                 repository.updateRecording(
                     recording.copy(
-                        processingStatus = "FAILED",
+                        processingStatus = ProcessingStatus.FAILED,
                         errorDetails = errorMsg,
                         updatedAt = System.currentTimeMillis()
                     )
@@ -154,7 +156,7 @@ class TranscriptionQueueManager(
                 Log.w(TAG, errorMsg)
                 repository.updateRecording(
                     recording.copy(
-                        processingStatus = "FAILED",
+                        processingStatus = ProcessingStatus.FAILED,
                         errorDetails = errorMsg,
                         updatedAt = System.currentTimeMillis()
                     )
@@ -167,7 +169,7 @@ class TranscriptionQueueManager(
             // Transition status to PROCESSING
             repository.updateRecording(
                 recording.copy(
-                    processingStatus = "PROCESSING",
+                    processingStatus = ProcessingStatus.PROCESSING,
                     errorDetails = null,
                     updatedAt = System.currentTimeMillis()
                 )
@@ -216,7 +218,7 @@ class TranscriptionQueueManager(
 
                 repository.updateRecording(
                     recording.copy(
-                        processingStatus = "COMPLETED",
+                        processingStatus = ProcessingStatus.COMPLETED,
                         errorDetails = null,
                         updatedAt = System.currentTimeMillis()
                     )
@@ -238,7 +240,7 @@ class TranscriptionQueueManager(
 
                 repository.updateRecording(
                     recording.copy(
-                        processingStatus = "COMPLETED",
+                        processingStatus = ProcessingStatus.COMPLETED,
                         errorDetails = null,
                         updatedAt = System.currentTimeMillis()
                     )
@@ -253,7 +255,7 @@ class TranscriptionQueueManager(
             // Previous transcripts are preserved in repository because clearTranscripts was not called!
             repository.updateRecording(
                 repository.getRecording(recordingId)?.copy(
-                    processingStatus = "FAILED",
+                    processingStatus = ProcessingStatus.FAILED,
                     errorDetails = errorMessage,
                     updatedAt = System.currentTimeMillis()
                 ) ?: return

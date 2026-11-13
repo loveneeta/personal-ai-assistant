@@ -1,5 +1,9 @@
 package com.personalai.assistant.backup
 
+import com.personalai.assistant.data.local.entity.RecordingStatus
+import com.personalai.assistant.data.local.entity.ProcessingStatus
+import com.personalai.assistant.data.local.entity.TaskStatus
+
 import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
@@ -110,9 +114,9 @@ class BackupManagerTest {
                 startTimestamp = 1730000000000L,
                 endTimestamp = 1730000600000L,
                 durationMs = 600000L,
-                status = "COMPLETED",
+                status = RecordingStatus.COMPLETED,
                 fileSizeBytes = 1920044L,
-                processingStatus = "COMPLETED"
+                processingStatus = ProcessingStatus.COMPLETED
             )
         )
         val rec2Id = repository.insertRecording(
@@ -122,9 +126,9 @@ class BackupManagerTest {
                 startTimestamp = 1730010000000L,
                 endTimestamp = 1730010300000L,
                 durationMs = 300000L,
-                status = "COMPLETED",
+                status = RecordingStatus.COMPLETED,
                 fileSizeBytes = 960044L,
-                processingStatus = "COMPLETED"
+                processingStatus = ProcessingStatus.COMPLETED
             )
         )
 
@@ -168,7 +172,7 @@ class BackupManagerTest {
                 sourceRecordingId = rec2Id,
                 dueDate = 1730040000000L,
                 assignedPerson = "Sales Lead",
-                status = "PENDING"
+                status = TaskStatus.PENDING
             )
         )
 
@@ -210,7 +214,7 @@ class BackupManagerTest {
         val restoredRec2 = restoredRecs.find { it.title == "Hinglish Client Discussion" }!!
 
         assertEquals(600000L, restoredRec1.durationMs)
-        assertEquals("COMPLETED", restoredRec1.processingStatus)
+        assertEquals(ProcessingStatus.COMPLETED, restoredRec1.processingStatus)
 
         // Transcripts
         val rec1Transcripts = repository.getTranscripts(restoredRec1.id)
@@ -300,8 +304,8 @@ class BackupManagerTest {
                 title = "Live Recording",
                 filePath = testAudioFile.absolutePath,
                 startTimestamp = System.currentTimeMillis() - 86400000L * 10, // 10 days old
-                status = "RECORDING",
-                processingStatus = "PENDING"
+                status = RecordingStatus.RECORDING,
+                processingStatus = ProcessingStatus.PENDING
             )
         )
 
@@ -312,8 +316,8 @@ class BackupManagerTest {
                 title = "Pending Transcription",
                 filePath = pendingAudio.absolutePath,
                 startTimestamp = System.currentTimeMillis() - 86400000L * 10,
-                status = "COMPLETED",
-                processingStatus = "PENDING"
+                status = RecordingStatus.COMPLETED,
+                processingStatus = ProcessingStatus.PENDING
             )
         )
 
@@ -324,8 +328,8 @@ class BackupManagerTest {
                 title = "Processing Transcription",
                 filePath = processingAudio.absolutePath,
                 startTimestamp = System.currentTimeMillis() - 86400000L * 10,
-                status = "COMPLETED",
-                processingStatus = "PROCESSING"
+                status = RecordingStatus.COMPLETED,
+                processingStatus = ProcessingStatus.PROCESSING
             )
         )
 
@@ -336,8 +340,8 @@ class BackupManagerTest {
                 title = "Old Completed Session",
                 filePath = completedAudio.absolutePath,
                 startTimestamp = System.currentTimeMillis() - 86400000L * 10,
-                status = "COMPLETED",
-                processingStatus = "COMPLETED"
+                status = RecordingStatus.COMPLETED,
+                processingStatus = ProcessingStatus.COMPLETED
             )
         )
 

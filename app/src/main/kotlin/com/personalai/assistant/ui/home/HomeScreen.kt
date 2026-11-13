@@ -1,5 +1,7 @@
 package com.personalai.assistant.ui.home
 
+import com.personalai.assistant.data.local.entity.RecordingStatus
+
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
@@ -1196,28 +1198,28 @@ fun RecordingItemCard(
                 Surface(
                     shape = RoundedCornerShape(4.dp),
                     color = when (recording.status) {
-                        "COMPLETED" -> JarvisCyanElectric.copy(alpha = 0.15f)
-                        "INTERRUPTED" -> JarvisStatusWarning.copy(alpha = 0.15f)
-                        "ERROR" -> JarvisStatusError.copy(alpha = 0.15f)
+                        RecordingStatus.COMPLETED -> JarvisCyanElectric.copy(alpha = 0.15f)
+                        RecordingStatus.INTERRUPTED -> JarvisStatusWarning.copy(alpha = 0.15f)
+                        RecordingStatus.ERROR -> JarvisStatusError.copy(alpha = 0.15f)
                         else -> JarvisGlassBorder
                     },
                     border = androidx.compose.foundation.BorderStroke(
                         0.8.dp,
                         when (recording.status) {
-                            "COMPLETED" -> JarvisCyanElectric.copy(alpha = 0.6f)
-                            "INTERRUPTED" -> JarvisStatusWarning.copy(alpha = 0.6f)
-                            "ERROR" -> JarvisStatusError.copy(alpha = 0.6f)
+                            RecordingStatus.COMPLETED -> JarvisCyanElectric.copy(alpha = 0.6f)
+                            RecordingStatus.INTERRUPTED -> JarvisStatusWarning.copy(alpha = 0.6f)
+                            RecordingStatus.ERROR -> JarvisStatusError.copy(alpha = 0.6f)
                             else -> JarvisGlassBorder
                         }
                     )
                 ) {
                     Text(
-                        text = recording.status,
+                        text = recording.status.name,
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                         color = when (recording.status) {
-                            "COMPLETED" -> JarvisCyanElectric
-                            "INTERRUPTED" -> JarvisStatusWarning
-                            "ERROR" -> JarvisStatusError
+                            RecordingStatus.COMPLETED -> JarvisCyanElectric
+                            RecordingStatus.INTERRUPTED -> JarvisStatusWarning
+                            RecordingStatus.ERROR -> JarvisStatusError
                             else -> JarvisTextSecondary
                         },
                         fontSize = 9.sp,

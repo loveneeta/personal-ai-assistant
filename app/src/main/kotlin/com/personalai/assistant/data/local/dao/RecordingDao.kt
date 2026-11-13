@@ -7,6 +7,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Update
 import com.personalai.assistant.data.local.entity.RecordingEntity
+import com.personalai.assistant.data.local.entity.RecordingStatus
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -39,7 +40,7 @@ interface RecordingDao {
     suspend fun rename(id: Long, newTitle: String, updatedAt: Long)
 
     @Query("UPDATE recordings SET status = :status, updatedAt = :updatedAt WHERE id = :id")
-    suspend fun updateStatus(id: Long, status: String, updatedAt: Long)
+    suspend fun updateStatus(id: Long, status: RecordingStatus, updatedAt: Long)
 
     @Query("UPDATE recordings SET durationMs = :durationMs, fileSizeBytes = :fileSizeBytes, endTimestamp = :endTimestamp, status = :status, updatedAt = :updatedAt WHERE id = :id")
     suspend fun finalizeRecording(
@@ -47,7 +48,7 @@ interface RecordingDao {
         durationMs: Long,
         fileSizeBytes: Long,
         endTimestamp: Long,
-        status: String,
+        status: RecordingStatus,
         updatedAt: Long
     )
 

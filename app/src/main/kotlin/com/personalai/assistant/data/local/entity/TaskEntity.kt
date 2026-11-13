@@ -7,20 +7,6 @@ import androidx.room.PrimaryKey
 
 @Entity(
     tableName = "tasks",
-    foreignKeys = [
-        ForeignKey(
-            entity = MeetingEntity::class,
-            parentColumns = ["id"],
-            childColumns = ["sourceMeetingId"],
-            onDelete = ForeignKey.SET_NULL
-        ),
-        ForeignKey(
-            entity = RecordingEntity::class,
-            parentColumns = ["id"],
-            childColumns = ["sourceRecordingId"],
-            onDelete = ForeignKey.SET_NULL
-        )
-    ],
     indices = [
         Index(value = ["sourceMeetingId"]),
         Index(value = ["sourceRecordingId"]),
@@ -37,6 +23,6 @@ data class TaskEntity(
     val sourceRecordingId: Long? = null,
     val dueDate: Long? = null,
     val assignedPerson: String? = null,
-    val status: String = "PENDING", // "PENDING", "IN_PROGRESS", "COMPLETED"
+    val status: TaskStatus = TaskStatus.PENDING,
     val createdAt: Long = System.currentTimeMillis()
 )

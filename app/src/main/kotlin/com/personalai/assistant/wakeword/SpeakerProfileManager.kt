@@ -58,6 +58,10 @@ class SpeakerProfileManager(private val context: Context) {
     private val _isSpeakerVerificationEnabled = MutableStateFlow(false)
     val isSpeakerVerificationEnabled: StateFlow<Boolean> = _isSpeakerVerificationEnabled.asStateFlow()
 
+    // Explicit state machine for speaker profile calibration & multi-pass enrollment
+    private val _enrollmentState = MutableStateFlow<EnrollmentState>(EnrollmentState.Unenrolled)
+    val enrollmentState: StateFlow<EnrollmentState> = _enrollmentState.asStateFlow()
+
     private var enrolledTemplate: FloatArray? = null
     private var verificationThreshold: Float = DEFAULT_THRESHOLD
 
@@ -71,6 +75,7 @@ class SpeakerProfileManager(private val context: Context) {
     private fun loadProfile() {
         if (!profileFile.exists()) {
             _isEnrolled.value = false
+            _enrollmentState.value = EnrollmentState.Unenrolled
             enrolledTemplate = null
             return
         }
@@ -90,10 +95,12 @@ class SpeakerProfileManager(private val context: Context) {
             verificationThreshold = threshold
             _isSpeakerVerificationEnabled.value = enabled
             _isEnrolled.value = true
+            _enrollmentState.value = EnrollmentState.Enrolled
             Log.i(TAG, "Loaded speaker profile template (${vector.size} dims), enabled=$enabled")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load speaker profile: ${e.message}")
             _isEnrolled.value = false
+            _enrollmentState.value = EnrollmentState.Unenrolled
             enrolledTemplate = null
         }
     }
@@ -115,6 +122,7 @@ class SpeakerProfileManager(private val context: Context) {
      */
     fun startEnrollment() {
         enrollmentSamples.clear()
+        _enrollmentState.value = EnrollmentState.InProgress(0, SAMPLES_REQUIRED)
     }
 
     /**
@@ -124,8 +132,14 @@ class SpeakerProfileManager(private val context: Context) {
     fun addEnrollmentSample(pcmData: ShortArray, length: Int): Int {
         val features = extractAcousticFeatures(pcmData, length)
         enrollmentSamples.add(features)
-        Log.i(TAG, "Captured enrollment sample #${enrollmentSamples.size}/$SAMPLES_REQUIRED")
-        return enrollmentSamples.size
+        val currentPass = enrollmentSamples.size
+        Log.i(TAG, "Captured enrollment sample #$currentPass/$SAMPLES_REQUIRED")
+        if (currentPass >= SAMPLES_REQUIRED) {
+            _enrollmentState.value = EnrollmentState.ReadyToFinalize(currentPass)
+        } else {
+            _enrollmentState.value = EnrollmentState.InProgress(currentPass, SAMPLES_REQUIRED)
+        }
+        return currentPass
     }
 
     /**
@@ -134,6 +148,7 @@ class SpeakerProfileManager(private val context: Context) {
     fun finalizeEnrollment(): Boolean {
         if (enrollmentSamples.size < SAMPLES_REQUIRED) {
             Log.w(TAG, "Insufficient enrollment samples (${enrollmentSamples.size}/$SAMPLES_REQUIRED)")
+            _enrollmentState.value = EnrollmentState.Error("Insufficient enrollment samples (${enrollmentSamples.size}/$SAMPLES_REQUIRED)")
             return false
         }
 
@@ -153,6 +168,7 @@ class SpeakerProfileManager(private val context: Context) {
         enrolledTemplate = template
         _isEnrolled.value = true
         _isSpeakerVerificationEnabled.value = true
+        _enrollmentState.value = EnrollmentState.Enrolled
         enrollmentSamples.clear()
 
         saveCurrentConfig()
@@ -168,6 +184,7 @@ class SpeakerProfileManager(private val context: Context) {
         enrolledTemplate = null
         _isEnrolled.value = false
         _isSpeakerVerificationEnabled.value = false
+        _enrollmentState.value = EnrollmentState.Unenrolled
         if (profileFile.exists()) {
             profileFile.delete()
         }
@@ -227,7 +244,7 @@ class SpeakerProfileManager(private val context: Context) {
         if (energy <= 1.0) return features
 
         // Autocorrelation pitch lags from 24 (666 Hz) to 144 (111 Hz) in steps of 8
-        // Captures fundamental vocal frequency F0 and sub-harmonics of the speaker\'s vocal tract
+        // Captures fundamental vocal frequency F0 and sub-harmonics of the speaker's vocal tract
         for (idx in 0 until VECTOR_DIMENSIONS) {
             val lag = 24 + idx * 8
             var corr = 0.0
@@ -285,6 +302,7 @@ class SpeakerProfileManager(private val context: Context) {
             Log.e(TAG, "Failed to persist speaker profile: ${e.message}")
         }
     }
+
     /**
      * Records a live 2.5s speech sample from the microphone and validates audio quality
      * (sufficient RMS energy, low clipping, SNR check) before extracting the acoustic feature vector.
@@ -292,7 +310,9 @@ class SpeakerProfileManager(private val context: Context) {
     @android.annotation.SuppressLint("MissingPermission")
     suspend fun recordAndProcessEnrollmentPass(durationMs: Long = 2500L): Result<Int> = withContext(Dispatchers.IO) {
         if (!JarvisVoiceCoordinator.requestMicrophone(AudioOwner.ENROLLMENT)) {
-            return@withContext Result.failure(IllegalStateException("Microphone is currently held by another session"))
+            val err = "Microphone is currently held by another session"
+            _enrollmentState.value = EnrollmentState.Error(err)
+            return@withContext Result.failure(IllegalStateException(err))
         }
 
         val sampleRate = 16000
@@ -309,7 +329,9 @@ class SpeakerProfileManager(private val context: Context) {
             )
 
             if (audioRecord.state != AudioRecord.STATE_INITIALIZED) {
-                return@withContext Result.failure(IllegalStateException("Failed to initialize microphone hardware"))
+                val err = "Failed to initialize microphone hardware"
+                _enrollmentState.value = EnrollmentState.Error(err)
+                return@withContext Result.failure(IllegalStateException(err))
             }
 
             audioRecord.startRecording()
@@ -336,15 +358,20 @@ class SpeakerProfileManager(private val context: Context) {
             }
             val rms = sqrt(sumSq / samplesRead)
             if (rms < 250.0) {
-                return@withContext Result.failure(IllegalArgumentException("Voice too quiet. Please speak closer to microphone."))
+                val err = "Voice too quiet. Please speak closer to microphone."
+                _enrollmentState.value = EnrollmentState.Error(err)
+                return@withContext Result.failure(IllegalArgumentException(err))
             }
             if (clipCount > (samplesRead * 0.15)) {
-                return@withContext Result.failure(IllegalArgumentException("Audio clipped. Please speak slightly further from microphone."))
+                val err = "Audio clipped. Please speak slightly further from microphone."
+                _enrollmentState.value = EnrollmentState.Error(err)
+                return@withContext Result.failure(IllegalArgumentException(err))
             }
 
             val pass = addEnrollmentSample(accumulator, samplesRead)
             Result.success(pass)
         } catch (e: Exception) {
+            _enrollmentState.value = EnrollmentState.Error(e.message ?: "Unknown enrollment error")
             Result.failure(e)
         } finally {
             try {
@@ -356,5 +383,4 @@ class SpeakerProfileManager(private val context: Context) {
             JarvisVoiceCoordinator.releaseMicrophone(AudioOwner.ENROLLMENT)
         }
     }
-
 }

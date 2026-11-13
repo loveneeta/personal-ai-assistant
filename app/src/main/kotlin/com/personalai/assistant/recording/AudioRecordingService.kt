@@ -22,7 +22,9 @@ import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.personalai.assistant.MainActivity
+import com.personalai.assistant.data.local.entity.ProcessingStatus
 import com.personalai.assistant.data.local.entity.RecordingEntity
+import com.personalai.assistant.data.local.entity.RecordingStatus
 import com.personalai.assistant.data.repository.AppRepository
 import com.personalai.assistant.wakeword.AudioOwner
 import com.personalai.assistant.wakeword.JarvisVoiceCoordinator
@@ -77,9 +79,17 @@ class AudioRecordingService : Service() {
     private var cumulativeActiveDurationMs: Long = 0
     private var currentElapsedDurationMs: Long = 0
 
-    private val isRecordingActive = AtomicBoolean(false)
-    private val isPaused = AtomicBoolean(false)
     private val isCleaningUp = AtomicBoolean(false)
+
+    private fun transitionTo(target: RecordingState): Boolean {
+        val current = _recordingState.value
+        if (!current.canTransitionTo(target)) {
+            Log.w(TAG, "Invalid state transition rejected: ${current::class.simpleName} -> ${target::class.simpleName}")
+            return false
+        }
+        _recordingState.value = target
+        return true
+    }
 
     private lateinit var repository: AppRepository
     private lateinit var notificationManager: NotificationManager
@@ -160,7 +170,7 @@ class AudioRecordingService : Service() {
      * synchronous Room database entity persistence, and continuous background WakeLock.
      */
     private suspend fun handleStartSession(title: String) {
-        if (isRecordingActive.get()) {
+        if (_recordingState.value.isActive) {
             Log.w(TAG, "Recording session already in progress, ignoring duplicate start request.")
             return
         }
@@ -239,10 +249,10 @@ class AudioRecordingService : Service() {
                 filePath = audioFile.absolutePath,
                 startTimestamp = recordingStartTimeMs,
                 durationMs = 0,
-                status = "RECORDING",
+                status = RecordingStatus.RECORDING,
                 fileSizeBytes = 44L,
                 mimeType = "audio/wav",
-                processingStatus = "PENDING"
+                processingStatus = ProcessingStatus.PENDING
             )
             currentRecordingId = withContext(Dispatchers.IO) { repository.insertRecording(entity) }
             Log.i(TAG, "Created persistent recording session #$currentRecordingId at ${audioFile.absolutePath}")
@@ -255,11 +265,8 @@ class AudioRecordingService : Service() {
             RecordingHealthMonitor.setMicState("CAPTURING")
             RecordingHealthMonitor.recordEvent("SESSION_START", "Recording #$currentRecordingId started: $currentTitle")
 
-            isRecordingActive.set(true)
-            isPaused.set(false)
-
-            // Post verified active state to observers
-            _recordingState.value = RecordingState.Recording(0, currentRecordingId, currentTitle)
+            // Transition to authoritative active Recording state
+            transitionTo(RecordingState.Recording(0, currentRecordingId, currentTitle))
 
             // Post persistent foreground notification with controls
             val notification = buildNotification(currentTitle, 0, false)
@@ -296,8 +303,8 @@ class AudioRecordingService : Service() {
                 val buffer = ByteArray(bufferSize)
                 var consecutiveErrors = 0
 
-                while (isActive && isRecordingActive.get()) {
-                    if (isPaused.get()) {
+                while (isActive && _recordingState.value.isActive) {
+                    if (_recordingState.value.isPaused) {
                         delay(50)
                         continue
                     }
@@ -360,9 +367,9 @@ class AudioRecordingService : Service() {
 
             // Duration timer ticker coroutine (updates notification and UI state every second)
             timerJob = serviceScope.launch {
-                while (isActive && isRecordingActive.get()) {
+                while (isActive && _recordingState.value.isActive) {
                     delay(1000)
-                    if (!isPaused.get()) {
+                    if (_recordingState.value.isRecording) {
                         val activeDelta = System.currentTimeMillis() - lastResumeTimestampMs
                         currentElapsedDurationMs = cumulativeActiveDurationMs + activeDelta
                         _recordingState.value = RecordingState.Recording(
@@ -417,8 +424,8 @@ class AudioRecordingService : Service() {
     }
 
     private suspend fun handlePauseSession() {
-        if (!isRecordingActive.get() || isPaused.get()) return
-        isPaused.set(true)
+        val current = _recordingState.value
+        if (current !is RecordingState.Recording) return
         RecordingHealthMonitor.setMicState("PAUSED")
 
         // Lock in elapsed active duration
@@ -426,10 +433,12 @@ class AudioRecordingService : Service() {
         cumulativeActiveDurationMs += activeDelta
         currentElapsedDurationMs = cumulativeActiveDurationMs
 
-        _recordingState.value = RecordingState.Paused(
-            durationMs = currentElapsedDurationMs,
-            recordingId = currentRecordingId,
-            title = currentTitle
+        transitionTo(
+            RecordingState.Paused(
+                durationMs = currentElapsedDurationMs,
+                recordingId = currentRecordingId,
+                title = currentTitle
+            )
         )
         notificationManager.notify(
             NOTIFICATION_ID,
@@ -441,7 +450,7 @@ class AudioRecordingService : Service() {
             if (existing != null) {
                 repository.updateRecording(
                     existing.copy(
-                        status = "PAUSED",
+                        status = RecordingStatus.PAUSED,
                         durationMs = currentElapsedDurationMs,
                         updatedAt = System.currentTimeMillis()
                     )
@@ -451,16 +460,18 @@ class AudioRecordingService : Service() {
     }
 
     private suspend fun handleResumeSession() {
-        if (!isRecordingActive.get() || !isPaused.get()) return
+        val current = _recordingState.value
+        if (current !is RecordingState.Paused) return
         requestAudioFocus()
         lastResumeTimestampMs = System.currentTimeMillis()
-        isPaused.set(false)
         RecordingHealthMonitor.setMicState("CAPTURING")
 
-        _recordingState.value = RecordingState.Recording(
-            durationMs = currentElapsedDurationMs,
-            recordingId = currentRecordingId,
-            title = currentTitle
+        transitionTo(
+            RecordingState.Recording(
+                durationMs = currentElapsedDurationMs,
+                recordingId = currentRecordingId,
+                title = currentTitle
+            )
         )
         notificationManager.notify(
             NOTIFICATION_ID,
@@ -472,7 +483,7 @@ class AudioRecordingService : Service() {
             if (existing != null) {
                 repository.updateRecording(
                     existing.copy(
-                        status = "RECORDING",
+                        status = RecordingStatus.RECORDING,
                         updatedAt = System.currentTimeMillis()
                     )
                 )
@@ -490,14 +501,12 @@ class AudioRecordingService : Service() {
      * 6. Emits Completed state and stops foreground.
      */
     private suspend fun handleStopSession() {
-        if (!isRecordingActive.get()) {
+        if (!_recordingState.value.isActive) {
             stopSelf()
             return
         }
 
-        _recordingState.value = RecordingState.Finalizing
-        isRecordingActive.set(false)
-        isPaused.set(false)
+        transitionTo(RecordingState.Finalizing)
 
         // 1. Stop AudioRecord hardware
         try {
@@ -555,8 +564,8 @@ class AudioRecordingService : Service() {
                             endTimestamp = System.currentTimeMillis(),
                             durationMs = finalDuration,
                             fileSizeBytes = finalLength,
-                            status = "COMPLETED",
-                            processingStatus = "PENDING",
+                            status = RecordingStatus.COMPLETED,
+                            processingStatus = ProcessingStatus.PENDING,
                             updatedAt = System.currentTimeMillis()
                         )
                     )
@@ -566,10 +575,12 @@ class AudioRecordingService : Service() {
             RecordingHealthMonitor.setMicState("IDLE")
             RecordingHealthMonitor.recordEvent("SESSION_FINALIZED", "Session completed: $finalAudioBytes audio bytes.")
 
-            _recordingState.value = RecordingState.Completed(
-                recordingId = currentRecordingId,
-                durationMs = finalDuration,
-                filePath = file.absolutePath
+            transitionTo(
+                RecordingState.Completed(
+                    recordingId = currentRecordingId,
+                    durationMs = finalDuration,
+                    filePath = file.absolutePath
+                )
             )
         } else {
             // Recording produced 0 audio bytes
@@ -578,7 +589,7 @@ class AudioRecordingService : Service() {
                 if (existing != null) {
                     repository.updateRecording(
                         existing.copy(
-                            status = "ERROR",
+                            status = RecordingStatus.ERROR,
                             errorDetails = "Recording produced an invalid or empty audio file",
                             updatedAt = System.currentTimeMillis()
                         )
@@ -700,7 +711,7 @@ class AudioRecordingService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        if (isRecordingActive.get()) {
+        if (_recordingState.value.isActive) {
             val file = currentFile
             if (file != null && file.exists() && totalBytesRecorded > 0) {
                 try {

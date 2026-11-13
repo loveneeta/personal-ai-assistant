@@ -1,20 +1,21 @@
 package com.personalai.assistant.data.repository
 
-import com.personalai.assistant.data.local.entity.WakeEventEntity
-
 import android.content.Context
 import com.personalai.assistant.data.local.AppDatabase
-import com.personalai.assistant.recording.WavWriter
 import com.personalai.assistant.data.local.entity.MeetingEntity
 import com.personalai.assistant.data.local.entity.NoteEntity
+import com.personalai.assistant.data.local.entity.ProcessingStatus
 import com.personalai.assistant.data.local.entity.RecordingEntity
+import com.personalai.assistant.data.local.entity.RecordingStatus
 import com.personalai.assistant.data.local.entity.TaskEntity
+import com.personalai.assistant.data.local.entity.TaskStatus
 import com.personalai.assistant.data.local.entity.TranscriptEntity
+import com.personalai.assistant.data.local.entity.WakeEventEntity
+import com.personalai.assistant.recording.WavWriter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.RandomAccessFile
 import java.util.Calendar
 
 class AppRepository(
@@ -58,7 +59,7 @@ class AppRepository(
 
     suspend fun deleteRecording(id: Long): Boolean = withContext(Dispatchers.IO) {
         val rec = recordingDao.getById(id) ?: return@withContext false
-        if (rec.status == "RECORDING" || rec.status == "PAUSED" || rec.processingStatus == "PROCESSING") {
+        if (rec.status.isActive || rec.processingStatus.isProcessing) {
             // Safety guard: Never delete audio currently being recorded or transcribed!
             return@withContext false
         }
@@ -89,7 +90,7 @@ class AppRepository(
                     durationMs = 0,
                     fileSizeBytes = 0,
                     endTimestamp = System.currentTimeMillis(),
-                    status = "ERROR",
+                    status = RecordingStatus.ERROR,
                     updatedAt = System.currentTimeMillis()
                 )
             } else {
@@ -102,7 +103,7 @@ class AppRepository(
                     durationMs = calculatedDurationMs,
                     fileSizeBytes = actualLength,
                     endTimestamp = System.currentTimeMillis(),
-                    status = "INTERRUPTED",
+                    status = RecordingStatus.INTERRUPTED,
                     updatedAt = System.currentTimeMillis()
                 )
                 recovered.add(rec)
@@ -210,7 +211,7 @@ class AppRepository(
     suspend fun updateTask(task: TaskEntity) = withContext(Dispatchers.IO) {
         taskDao.update(task)
     }
-    suspend fun updateTaskStatus(id: Long, status: String) = withContext(Dispatchers.IO) {
+    suspend fun updateTaskStatus(id: Long, status: TaskStatus) = withContext(Dispatchers.IO) {
         taskDao.updateStatus(id, status)
     }
     suspend fun deleteTask(id: Long) = withContext(Dispatchers.IO) {
@@ -241,7 +242,6 @@ class AppRepository(
         noteDao.deleteById(id)
     }
 
-
     // --- Wake Events & Voice Protocol ---
     suspend fun insertWakeEvent(event: WakeEventEntity): Long = withContext(Dispatchers.IO) {
         wakeEventDao.insert(event)
@@ -266,7 +266,7 @@ class AppRepository(
 
     suspend fun deleteAudioKeepTranscript(recordingId: Long): Boolean = withContext(Dispatchers.IO) {
         val rec = recordingDao.getById(recordingId) ?: return@withContext false
-        if (rec.status == "RECORDING" || rec.status == "PAUSED" || rec.processingStatus == "PROCESSING") {
+        if (rec.status.isActive || rec.processingStatus.isProcessing) {
             // Safety guard: Never delete audio while capture or transcription is active
             return@withContext false
         }

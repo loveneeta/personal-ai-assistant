@@ -331,7 +331,7 @@ fun MeetingDetailsScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Checkbox(
-                                    checked = task.status == "COMPLETED",
+                                    checked = task.status.isCompleted,
                                     onCheckedChange = { viewModel.toggleTaskStatus(task.id, task.status) },
                                     colors = CheckboxDefaults.colors(
                                         checkedColor = JarvisCyan,
@@ -345,7 +345,7 @@ fun MeetingDetailsScreen(
                                         task.title,
                                         style = MaterialTheme.typography.bodyMedium,
                                         fontWeight = FontWeight.SemiBold,
-                                        color = if (task.status == "COMPLETED") JarvisTextMuted else JarvisTextPrimary
+                                        color = if (task.status.isCompleted) JarvisTextMuted else JarvisTextPrimary
                                     )
                                     if (!task.assignedPerson.isNullOrBlank()) {
                                         Text(

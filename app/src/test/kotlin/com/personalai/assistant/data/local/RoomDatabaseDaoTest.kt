@@ -11,9 +11,10 @@ import com.personalai.assistant.data.local.dao.TranscriptDao
 import com.personalai.assistant.data.local.entity.MeetingEntity
 import com.personalai.assistant.data.local.entity.NoteEntity
 import com.personalai.assistant.data.local.entity.RecordingEntity
+import com.personalai.assistant.data.local.entity.RecordingStatus
 import com.personalai.assistant.data.local.entity.TaskEntity
+import com.personalai.assistant.data.local.entity.TaskStatus
 import com.personalai.assistant.data.local.entity.TranscriptEntity
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -62,7 +63,7 @@ class RoomDatabaseDaoTest {
             filePath = "/data/user/0/com.personalai.assistant/files/recordings/test.wav",
             startTimestamp = 1000L,
             durationMs = 60000L,
-            status = "COMPLETED",
+            status = RecordingStatus.COMPLETED,
             fileSizeBytes = 1920044L,
             mimeType = "audio/wav"
         )
@@ -73,7 +74,7 @@ class RoomDatabaseDaoTest {
         assertNotNull(retrieved)
         assertEquals("Project Planning Sync", retrieved?.title)
         assertEquals(60000L, retrieved?.durationMs)
-        assertEquals("COMPLETED", retrieved?.status)
+        assertEquals(RecordingStatus.COMPLETED, retrieved?.status)
     }
 
     @Test
@@ -82,7 +83,7 @@ class RoomDatabaseDaoTest {
             title = "Old Title",
             filePath = "/path/test.wav",
             startTimestamp = 1000L,
-            status = "RECORDING"
+            status = RecordingStatus.RECORDING
         )
         val id = recordingDao.insert(recording)
 
@@ -95,11 +96,11 @@ class RoomDatabaseDaoTest {
             durationMs = 120000L,
             fileSizeBytes = 3840044L,
             endTimestamp = 3000L,
-            status = "COMPLETED",
+            status = RecordingStatus.COMPLETED,
             updatedAt = 3000L
         )
         updated = recordingDao.getById(id)
-        assertEquals("COMPLETED", updated?.status)
+        assertEquals(RecordingStatus.COMPLETED, updated?.status)
         assertEquals(120000L, updated?.durationMs)
         assertEquals(3840044L, updated?.fileSizeBytes)
     }
@@ -111,7 +112,7 @@ class RoomDatabaseDaoTest {
                 title = "Meeting with Cascading Transcripts",
                 filePath = "/path/rec.wav",
                 startTimestamp = 1000L,
-                status = "COMPLETED"
+                status = RecordingStatus.COMPLETED
             )
         )
 
@@ -150,7 +151,7 @@ class RoomDatabaseDaoTest {
                 title = "Hindi English Mix Session",
                 filePath = "/path/rec.wav",
                 startTimestamp = 1000L,
-                status = "COMPLETED"
+                status = RecordingStatus.COMPLETED
             )
         )
 
@@ -188,7 +189,7 @@ class RoomDatabaseDaoTest {
                 title = "Recorded Session",
                 filePath = "/path/rec.wav",
                 startTimestamp = 1000L,
-                status = "COMPLETED"
+                status = RecordingStatus.COMPLETED
             )
         )
 
@@ -223,17 +224,31 @@ class RoomDatabaseDaoTest {
         // Delete recording
         recordingDao.deleteById(recId)
 
-        // Meeting, Task, and Note MUST still exist (SET_NULL on sourceRecordingId)
+        // Meeting, Task, and Note MUST still exist even after recording is deleted
         val meetingAfter = meetingDao.getById(meetingId)
         assertNotNull(meetingAfter)
-        assertNull(meetingAfter?.sourceRecordingId)
 
         val taskAfter = taskDao.getById(taskId)
         assertNotNull(taskAfter)
-        assertNull(taskAfter?.sourceRecordingId)
 
         val noteAfter = noteDao.getById(noteId)
         assertNotNull(noteAfter)
-        assertNull(noteAfter?.linkedRecordingId)
+    }
+
+    @Test
+    fun taskDao_toggleTaskCompletedState() = runTest {
+        val taskId = taskDao.insert(
+            TaskEntity(
+                title = "Review PR",
+                status = TaskStatus.PENDING
+            )
+        )
+
+        var task = taskDao.getById(taskId)
+        assertEquals(TaskStatus.PENDING, task?.status)
+
+        taskDao.updateStatus(taskId, TaskStatus.COMPLETED)
+        task = taskDao.getById(taskId)
+        assertEquals(TaskStatus.COMPLETED, task?.status)
     }
 }

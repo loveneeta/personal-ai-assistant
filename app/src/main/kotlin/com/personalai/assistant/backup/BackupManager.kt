@@ -3,8 +3,11 @@ package com.personalai.assistant.backup
 import android.content.Context
 import com.personalai.assistant.data.local.entity.MeetingEntity
 import com.personalai.assistant.data.local.entity.NoteEntity
+import com.personalai.assistant.data.local.entity.ProcessingStatus
 import com.personalai.assistant.data.local.entity.RecordingEntity
+import com.personalai.assistant.data.local.entity.RecordingStatus
 import com.personalai.assistant.data.local.entity.TaskEntity
+import com.personalai.assistant.data.local.entity.TaskStatus
 import com.personalai.assistant.data.local.entity.TranscriptEntity
 import com.personalai.assistant.data.repository.AppRepository
 import kotlinx.coroutines.Dispatchers
@@ -64,10 +67,10 @@ object BackupManager {
                 obj.put("startTimestamp", r.startTimestamp)
                 if (r.endTimestamp != null) obj.put("endTimestamp", r.endTimestamp)
                 obj.put("durationMs", r.durationMs)
-                obj.put("status", r.status)
+                obj.put("status", r.status.name)
                 obj.put("fileSizeBytes", r.fileSizeBytes)
                 obj.put("mimeType", r.mimeType)
-                obj.put("processingStatus", r.processingStatus)
+                obj.put("processingStatus", r.processingStatus.name)
                 if (r.errorDetails != null) obj.put("errorDetails", r.errorDetails)
                 recArray.put(obj)
             }
@@ -115,7 +118,7 @@ object BackupManager {
                 if (tsk.sourceRecordingId != null) obj.put("sourceRecordingId", tsk.sourceRecordingId)
                 if (tsk.dueDate != null) obj.put("dueDate", tsk.dueDate)
                 if (tsk.assignedPerson != null) obj.put("assignedPerson", tsk.assignedPerson)
-                obj.put("status", tsk.status)
+                obj.put("status", tsk.status.name)
                 taskArray.put(obj)
             }
             root.put("tasks", taskArray)
@@ -228,10 +231,10 @@ object BackupManager {
                         startTimestamp = obj.getLong("startTimestamp"),
                         endTimestamp = if (obj.has("endTimestamp") && !obj.isNull("endTimestamp")) obj.getLong("endTimestamp") else null,
                         durationMs = obj.optLong("durationMs", 0L),
-                        status = obj.optString("status", "COMPLETED"),
+                        status = RecordingStatus.fromString(obj.optString("status", "COMPLETED")),
                         fileSizeBytes = obj.optLong("fileSizeBytes", 0L),
                         mimeType = obj.optString("mimeType", "audio/wav"),
-                        processingStatus = obj.optString("processingStatus", "COMPLETED"),
+                        processingStatus = ProcessingStatus.fromString(obj.optString("processingStatus", "COMPLETED")),
                         errorDetails = if (obj.has("errorDetails") && !obj.isNull("errorDetails")) obj.getString("errorDetails") else null
                     )
                 )
@@ -299,7 +302,7 @@ object BackupManager {
                         sourceRecordingId = if (oldSourceRecId != null) oldToNewRecId[oldSourceRecId] else null,
                         dueDate = if (obj.has("dueDate") && !obj.isNull("dueDate")) obj.getLong("dueDate") else null,
                         assignedPerson = if (obj.has("assignedPerson") && !obj.isNull("assignedPerson")) obj.getString("assignedPerson") else null,
-                        status = obj.optString("status", "PENDING")
+                        status = TaskStatus.fromString(obj.optString("status", "PENDING"))
                     )
                 )
             }

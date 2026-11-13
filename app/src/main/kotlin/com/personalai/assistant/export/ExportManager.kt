@@ -8,7 +8,6 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
 import androidx.core.content.FileProvider
-import com.personalai.assistant.ai.ExtractedMeetingMinutes
 import com.personalai.assistant.data.local.entity.MeetingEntity
 import com.personalai.assistant.data.local.entity.RecordingEntity
 import com.personalai.assistant.data.local.entity.TaskEntity
@@ -101,7 +100,7 @@ object ExportManager {
             y += 16f
 
             for (task in tasks) {
-                val statusSymbol = if (task.status == "COMPLETED") "[x]" else "[ ]"
+                val statusSymbol = if (task.status.isCompleted) "[x]" else "[ ]"
                 val assignee = if (!task.assignedPerson.isNullOrBlank()) " (${task.assignedPerson})" else ""
                 val due = if (task.dueDate != null) {
                     " - Due: " + SimpleDateFormat("MMM d", Locale.getDefault()).format(Date(task.dueDate))
@@ -168,7 +167,7 @@ object ExportManager {
         if (tasks.isNotEmpty()) {
             sb.append("## Action Items\n")
             for (t in tasks) {
-                val check = if (t.status == "COMPLETED") "[x]" else "[ ]"
+                val check = if (t.status.isCompleted) "[x]" else "[ ]"
                 val assignee = if (!t.assignedPerson.isNullOrBlank()) " (@${t.assignedPerson})" else ""
                 val due = if (t.dueDate != null) {
                     " [Due: ${SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(Date(t.dueDate))}]"
@@ -202,7 +201,7 @@ object ExportManager {
             val created = dateFormat.format(Date(t.createdAt))
             val cleanTitle = t.title.replace("\"", "\"\"")
             val cleanPerson = (t.assignedPerson ?: "").replace("\"", "\"\"")
-            sb.append("${t.id},\"$cleanTitle\",\"$cleanPerson\",$due,${t.status},$created\n")
+            sb.append("${t.id},\"$cleanTitle\",\"$cleanPerson\",$due,${t.status.name},$created\n")
         }
 
         val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
@@ -222,7 +221,7 @@ object ExportManager {
         sb.append("  \"title\": \"${escapeJson(recording.title)}\",\n")
         sb.append("  \"startTimestamp\": ${recording.startTimestamp},\n")
         sb.append("  \"durationMs\": ${recording.durationMs},\n")
-        sb.append("  \"status\": \"${recording.status}\",\n")
+        sb.append("  \"status\": \"${recording.status.name}\",\n")
         sb.append("  \"segments\": [\n")
         for ((idx, tr) in transcripts.withIndex()) {
             sb.append("    {\n")

@@ -1,6 +1,8 @@
 package com.personalai.assistant.retention
 
 import android.content.Context
+import com.personalai.assistant.data.local.entity.ProcessingStatus
+import com.personalai.assistant.data.local.entity.RecordingStatus
 import com.personalai.assistant.data.repository.AppRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -35,13 +37,11 @@ object RetentionManager {
     }
 
     /**
-     * Executes retention cleanup according to user policy.
-     * Guaranteed rules:
-     * 1. Never deletes audio currently being recorded or paused.
-     * 2. Never deletes audio currently being transcribed or pending transcription.
-     * 3. Reconciles database records when physical files are already missing from disk.
-     * 4. Does not corrupt database records if physical deletion fails.
-     * 5. Runs off the main thread on Dispatchers.IO.
+     * Executes automatic storage retention cleanup according to user policy.
+     * Pruning rule: Deletes the physical .wav file from device storage, but
+     * PRESERVES all associated transcripts, action items, and notes in the database.
+     *
+     * @return Number of audio files safely pruned.
      */
     suspend fun executeRetentionCleanup(context: Context, repository: AppRepository): Int = withContext(Dispatchers.IO) {
         val policy = getPolicy(context)
@@ -53,12 +53,12 @@ object RetentionManager {
 
         for (rec in recordings) {
             // Safety guard: Never delete audio currently capturing
-            if (rec.status == "RECORDING" || rec.status == "PAUSED") {
+            if (rec.status.isActive) {
                 continue
             }
 
             // Safety guard: Never delete audio actively being transcribed or pending transcription
-            if (rec.processingStatus == "PROCESSING" || rec.processingStatus == "PENDING") {
+            if (rec.processingStatus.isProcessing || rec.processingStatus.isPending) {
                 continue
             }
 
@@ -75,7 +75,7 @@ object RetentionManager {
 
             if (policy == AudioRetentionPolicy.IMMEDIATE_POST_TRANSCRIPT) {
                 // Prune only when recording capture is finished AND transcription is completed
-                if (rec.status == "COMPLETED" && rec.processingStatus == "COMPLETED") {
+                if (rec.status == RecordingStatus.COMPLETED && rec.processingStatus.isCompleted) {
                     shouldDeleteAudio = true
                 }
             } else if (policy.days > 0) {
@@ -83,7 +83,7 @@ object RetentionManager {
                 val maxAgeMs = TimeUnit.DAYS.toMillis(policy.days.toLong())
                 if (ageMs > maxAgeMs) {
                     // Safe to prune completed transcripts or failed/interrupted recordings older than window
-                    if (rec.processingStatus == "COMPLETED" || rec.status == "INTERRUPTED" || rec.status == "ERROR" || rec.processingStatus == "FAILED") {
+                    if (rec.processingStatus.isCompleted || rec.status == RecordingStatus.INTERRUPTED || rec.status == RecordingStatus.ERROR || rec.processingStatus.isFailed) {
                         shouldDeleteAudio = true
                     }
                 }
@@ -94,6 +94,7 @@ object RetentionManager {
                 if (deleted) cleanedCount++
             }
         }
+
         cleanedCount
     }
 }

@@ -7,6 +7,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Update
 import com.personalai.assistant.data.local.entity.TaskEntity
+import com.personalai.assistant.data.local.entity.TaskStatus
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -33,7 +34,7 @@ interface TaskDao {
     fun getTasksForMeetingFlow(meetingId: Long): Flow<List<TaskEntity>>
 
     @Query("UPDATE tasks SET status = :status WHERE id = :id")
-    suspend fun updateStatus(id: Long, status: String)
+    suspend fun updateStatus(id: Long, status: TaskStatus)
 
     @Query("SELECT * FROM tasks ORDER BY createdAt DESC")
     suspend fun getAllTasks(): List<TaskEntity>

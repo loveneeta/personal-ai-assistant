@@ -2,6 +2,7 @@ package com.personalai.assistant.ui.recordings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.personalai.assistant.data.local.entity.ProcessingStatus
 import com.personalai.assistant.data.local.entity.RecordingEntity
 import com.personalai.assistant.data.local.entity.TranscriptEntity
 import com.personalai.assistant.data.repository.AppRepository
@@ -57,7 +58,7 @@ class RecordingDetailsViewModel(
                     }
 
                     // If processing status is still PENDING, automatically trigger transcription
-                    if (rec.processingStatus == "PENDING" && file.exists() && file.length() > 44) {
+                    if (rec.processingStatus == ProcessingStatus.PENDING && file.exists() && file.length() > 44) {
                         queueManager.enqueue(recordingId)
                     }
                 }

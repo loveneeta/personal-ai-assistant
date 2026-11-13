@@ -1,5 +1,7 @@
 package com.personalai.assistant.ai
 
+import com.personalai.assistant.data.local.entity.TaskStatus
+
 import com.personalai.assistant.data.local.entity.MeetingEntity
 import com.personalai.assistant.data.local.entity.NoteEntity
 import com.personalai.assistant.data.local.entity.RecordingEntity
@@ -22,8 +24,8 @@ class DailySummarySynthesizerTest {
             MeetingEntity(id = 1, title = "Morning Standup", startTimestamp = System.currentTimeMillis(), summary = "Discussed release schedule.")
         )
         val tasks = listOf(
-            TaskEntity(id = 1, title = "Fix UI padding", status = "COMPLETED"),
-            TaskEntity(id = 2, title = "Submit Play Store build", status = "PENDING", assignedPerson = "Loveneet")
+            TaskEntity(id = 1, title = "Fix UI padding", status = TaskStatus.COMPLETED),
+            TaskEntity(id = 2, title = "Submit Play Store build", status = TaskStatus.PENDING, assignedPerson = "Loveneet")
         )
         val notes = listOf(
             NoteEntity(id = 1, title = "Idea", content = "Add widget for recording tile")

@@ -20,10 +20,10 @@ data class RecordingEntity(
     val startTimestamp: Long,
     val endTimestamp: Long? = null,
     val durationMs: Long = 0,
-    val status: String = "COMPLETED", // "RECORDING", "PAUSED", "COMPLETED", "INTERRUPTED", "ERROR"
+    val status: RecordingStatus = RecordingStatus.COMPLETED,
     val fileSizeBytes: Long = 0,
     val mimeType: String = "audio/wav",
-    val processingStatus: String = "PENDING", // "PENDING", "PROCESSING", "COMPLETED", "FAILED"
+    val processingStatus: ProcessingStatus = ProcessingStatus.PENDING,
     val errorDetails: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()

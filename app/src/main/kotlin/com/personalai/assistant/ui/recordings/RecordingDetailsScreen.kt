@@ -1,6 +1,8 @@
 package com.personalai.assistant.ui.recordings
 
 import androidx.compose.animation.AnimatedVisibility
+import com.personalai.assistant.data.local.entity.ProcessingStatus
+import com.personalai.assistant.data.local.entity.RecordingStatus
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -352,14 +354,14 @@ fun RecordingDetailsScreen(
                                     Surface(
                                         shape = RoundedCornerShape(4.dp),
                                         color = when (rec.processingStatus) {
-                                            "COMPLETED" -> MaterialTheme.colorScheme.primaryContainer
-                                            "PROCESSING" -> MaterialTheme.colorScheme.tertiaryContainer
-                                            "FAILED" -> MaterialTheme.colorScheme.errorContainer
+                                            ProcessingStatus.COMPLETED -> MaterialTheme.colorScheme.primaryContainer
+                                            ProcessingStatus.PROCESSING -> MaterialTheme.colorScheme.tertiaryContainer
+                                            ProcessingStatus.FAILED -> MaterialTheme.colorScheme.errorContainer
                                             else -> MaterialTheme.colorScheme.surfaceVariant
                                         }
                                     ) {
                                         Text(
-                                            rec.processingStatus,
+                                            rec.processingStatus.name,
                                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                                             style = MaterialTheme.typography.labelSmall,
                                             fontWeight = FontWeight.Bold
@@ -367,7 +369,7 @@ fun RecordingDetailsScreen(
                                     }
                                 }
 
-                                if (rec.processingStatus == "FAILED") {
+                                if (rec.processingStatus == ProcessingStatus.FAILED) {
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Text(
                                         rec.errorDetails ?: "Transcription failed. Ensure a speech model is downloaded.",
@@ -448,7 +450,7 @@ fun RecordingDetailsScreen(
                             )
                         }
                     }
-                } else if (rec.processingStatus == "COMPLETED") {
+                } else if (rec.processingStatus == ProcessingStatus.COMPLETED) {
                     Text(
                         "No spoken segments were extracted from this session.",
                         style = MaterialTheme.typography.bodyMedium,
@@ -514,7 +516,7 @@ fun RecordingDetailsScreen(
                         } else {
                             MetadataRow("Engine", "Android Google Speech Recognition (Voice Keyboard)")
                         }
-                        MetadataRow("Status", rec.status)
+                        MetadataRow("Status", rec.status.name)
                     }
                 }
             }

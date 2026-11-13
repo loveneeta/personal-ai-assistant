@@ -161,4 +161,68 @@ class WakeWordStateMachineTest {
         assertEquals(AudioOwner.NONE, JarvisVoiceCoordinator.currentOwner.value)
     }
 
+
+    @Test
+    fun testVoiceCoordinator_multiLevelPriorityPreemptionStack() {
+        JarvisVoiceCoordinator.forceRelease()
+        assertEquals(AudioOwner.NONE, JarvisVoiceCoordinator.currentOwner.value)
+
+        // 1. Background listener acquires mic (priority 10)
+        assertTrue(JarvisVoiceCoordinator.requestMicrophone(AudioOwner.ALWAYS_ON_LISTENER))
+        assertEquals(AudioOwner.ALWAYS_ON_LISTENER, JarvisVoiceCoordinator.currentOwner.value)
+
+        // 2. STT Voice Matrix preempts Always-On (priority 20 > 10)
+        assertTrue(JarvisVoiceCoordinator.requestMicrophone(AudioOwner.VOICE_MATRIX))
+        assertEquals(AudioOwner.VOICE_MATRIX, JarvisVoiceCoordinator.currentOwner.value)
+
+        // 3. User Voice Profile Enrollment preempts STT (priority 30 > 20)
+        assertTrue(JarvisVoiceCoordinator.requestMicrophone(AudioOwner.ENROLLMENT))
+        assertEquals(AudioOwner.ENROLLMENT, JarvisVoiceCoordinator.currentOwner.value)
+
+        // 4. Foreground WAV recorder preempts Enrollment (priority 40 > 30)
+        assertTrue(JarvisVoiceCoordinator.requestMicrophone(AudioOwner.WAV_RECORDER))
+        assertEquals(AudioOwner.WAV_RECORDER, JarvisVoiceCoordinator.currentOwner.value)
+
+        // Unwinding the stack in reverse priority order:
+        JarvisVoiceCoordinator.releaseMicrophone(AudioOwner.WAV_RECORDER)
+        assertEquals(AudioOwner.ENROLLMENT, JarvisVoiceCoordinator.currentOwner.value)
+
+        JarvisVoiceCoordinator.releaseMicrophone(AudioOwner.ENROLLMENT)
+        assertEquals(AudioOwner.VOICE_MATRIX, JarvisVoiceCoordinator.currentOwner.value)
+
+        JarvisVoiceCoordinator.releaseMicrophone(AudioOwner.VOICE_MATRIX)
+        assertEquals(AudioOwner.ALWAYS_ON_LISTENER, JarvisVoiceCoordinator.currentOwner.value)
+
+        JarvisVoiceCoordinator.releaseMicrophone(AudioOwner.ALWAYS_ON_LISTENER)
+        assertEquals(AudioOwner.NONE, JarvisVoiceCoordinator.currentOwner.value)
+    }
+
+    @Test
+    fun testSpeakerProfile_explicitEnrollmentStateMachine() {
+        speakerManager.deleteProfile()
+        assertTrue(speakerManager.enrollmentState.value is EnrollmentState.Unenrolled)
+
+        speakerManager.startEnrollment()
+        val inProgress0 = speakerManager.enrollmentState.value as EnrollmentState.InProgress
+        assertEquals(0, inProgress0.currentPass)
+
+        val sample = generateHarmonicPcm(440.0, 16000)
+        speakerManager.addEnrollmentSample(sample, sample.size)
+        val inProgress1 = speakerManager.enrollmentState.value as EnrollmentState.InProgress
+        assertEquals(1, inProgress1.currentPass)
+
+        speakerManager.addEnrollmentSample(sample, sample.size)
+        val inProgress2 = speakerManager.enrollmentState.value as EnrollmentState.InProgress
+        assertEquals(2, inProgress2.currentPass)
+
+        speakerManager.addEnrollmentSample(sample, sample.size)
+        assertTrue(speakerManager.enrollmentState.value is EnrollmentState.ReadyToFinalize)
+
+        val success = speakerManager.finalizeEnrollment()
+        assertTrue(success)
+        assertTrue(speakerManager.enrollmentState.value is EnrollmentState.Enrolled)
+
+        speakerManager.deleteProfile()
+        assertTrue(speakerManager.enrollmentState.value is EnrollmentState.Unenrolled)
+    }
 }

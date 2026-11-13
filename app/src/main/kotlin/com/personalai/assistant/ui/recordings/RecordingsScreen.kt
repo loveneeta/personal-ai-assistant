@@ -1,5 +1,7 @@
 package com.personalai.assistant.ui.recordings
 
+import com.personalai.assistant.data.local.entity.RecordingStatus
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -377,32 +379,32 @@ fun RecordingFullCard(
                 Surface(
                     shape = RoundedCornerShape(6.dp),
                     color = when (recording.status) {
-                        "COMPLETED" -> JarvisCyan.copy(alpha = 0.15f)
-                        "INTERRUPTED" -> JarvisNeonViolet.copy(alpha = 0.15f)
-                        "ERROR" -> MaterialTheme.colorScheme.error.copy(alpha = 0.15f)
+                        RecordingStatus.COMPLETED -> JarvisCyan.copy(alpha = 0.15f)
+                        RecordingStatus.INTERRUPTED -> JarvisNeonViolet.copy(alpha = 0.15f)
+                        RecordingStatus.ERROR -> MaterialTheme.colorScheme.error.copy(alpha = 0.15f)
                         else -> JarvisSurfaceDark
                     },
                     border = androidx.compose.foundation.BorderStroke(
                         1.dp,
                         when (recording.status) {
-                            "COMPLETED" -> JarvisCyan.copy(alpha = 0.7f)
-                            "INTERRUPTED" -> JarvisNeonViolet.copy(alpha = 0.7f)
-                            "ERROR" -> MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
+                            RecordingStatus.COMPLETED -> JarvisCyan.copy(alpha = 0.7f)
+                            RecordingStatus.INTERRUPTED -> JarvisNeonViolet.copy(alpha = 0.7f)
+                            RecordingStatus.ERROR -> MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
                             else -> JarvisBorderCyan
                         }
                     )
                 ) {
                     Text(
-                        recording.status,
+                        recording.status.name,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                         style = MaterialTheme.typography.labelSmall,
                         fontFamily = FontFamily.Monospace,
                         fontSize = 9.sp,
                         fontWeight = FontWeight.Bold,
                         color = when (recording.status) {
-                            "COMPLETED" -> JarvisCyan
-                            "INTERRUPTED" -> JarvisNeonViolet
-                            "ERROR" -> MaterialTheme.colorScheme.error
+                            RecordingStatus.COMPLETED -> JarvisCyan
+                            RecordingStatus.INTERRUPTED -> JarvisNeonViolet
+                            RecordingStatus.ERROR -> MaterialTheme.colorScheme.error
                             else -> JarvisTextSecondary
                         }
                     )

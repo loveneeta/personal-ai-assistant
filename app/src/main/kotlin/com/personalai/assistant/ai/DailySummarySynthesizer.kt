@@ -33,8 +33,8 @@ object DailySummarySynthesizer {
         val shortDate = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(date)
 
         val totalDurationMs = todayRecordings.sumOf { it.durationMs }
-        val completedToday = allTasks.filter { it.status == "COMPLETED" }
-        val pendingTasks = allTasks.filter { it.status != "COMPLETED" }
+        val completedToday = allTasks.filter { it.status.isCompleted }
+        val pendingTasks = allTasks.filter { !it.status.isCompleted }
 
         val sb = StringBuilder()
         sb.append("# Daily Personal AI Summary\n")

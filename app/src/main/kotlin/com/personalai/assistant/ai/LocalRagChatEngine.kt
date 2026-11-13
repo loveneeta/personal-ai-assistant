@@ -4,6 +4,7 @@ import com.personalai.assistant.data.local.entity.MeetingEntity
 import com.personalai.assistant.data.local.entity.NoteEntity
 import com.personalai.assistant.data.local.entity.RecordingEntity
 import com.personalai.assistant.data.local.entity.TaskEntity
+import com.personalai.assistant.data.local.entity.TaskStatus
 import com.personalai.assistant.data.local.entity.TranscriptEntity
 import com.personalai.assistant.data.repository.AppRepository
 import java.text.SimpleDateFormat
@@ -94,7 +95,7 @@ class LocalRagChatEngine(private val repository: AppRepository) {
             val newTaskId = repository.insertTask(
                 TaskEntity(
                     title = cleanTitle,
-                    status = "PENDING"
+                    status = TaskStatus.PENDING
                 )
             )
             return ChatMessage(
@@ -130,7 +131,7 @@ class LocalRagChatEngine(private val repository: AppRepository) {
         // 1. Check for specific intent: Listing pending tasks
         if (lower.contains("task") || lower.contains("to do") || lower.contains("action item") || lower.contains("kaam")) {
             val allTasks = repository.getAllTasks()
-            val pending = allTasks.filter { it.status != "COMPLETED" }
+            val pending = allTasks.filter { !it.status.isCompleted }
             if (pending.isNotEmpty()) {
                 val sb = StringBuilder("Here are your pending action items (${pending.size}):\n\n")
                 for ((idx, task) in pending.withIndex()) {
@@ -311,14 +312,14 @@ class LocalRagChatEngine(private val repository: AppRepository) {
         if (matchedTasks.isNotEmpty()) {
             sb.append("### Relevant Tasks\n")
             for (tk in matchedTasks.take(3)) {
-                val status = if (tk.status == "COMPLETED") "[Completed]" else "[Pending]"
+                val status = if (tk.status.isCompleted) "[Completed]" else "[Pending]"
                 sb.append("• **${tk.title}** $status\n")
                 citations.add(
                     Citation(
                         type = "TASK",
                         referenceId = tk.id,
                         title = tk.title,
-                        snippet = "Status: ${tk.status}"
+                        snippet = "Status: ${tk.status.name}"
                     )
                 )
             }

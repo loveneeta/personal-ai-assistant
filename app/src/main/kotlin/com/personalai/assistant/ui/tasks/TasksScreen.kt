@@ -369,7 +369,7 @@ fun TaskRowCard(
     onToggle: () -> Unit,
     onDelete: () -> Unit
 ) {
-    val isCompleted = task.status == "COMPLETED"
+    val isCompleted = task.status.isCompleted
 
     JarvisGlassCard(
         modifier = Modifier.fillMaxWidth(),

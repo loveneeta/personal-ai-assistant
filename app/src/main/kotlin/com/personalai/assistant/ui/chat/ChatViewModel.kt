@@ -96,7 +96,7 @@ class ChatViewModel(
         val sb = StringBuilder()
 
         // 1. Pending Tasks
-        val pendingTasks = repository.getAllTasks().filter { it.status != "COMPLETED" }.take(5)
+        val pendingTasks = repository.getAllTasks().filter { !it.status.isCompleted }.take(5)
         if (pendingTasks.isNotEmpty()) {
             sb.append("--- PENDING ACTION ITEMS ---\n")
             for (t in pendingTasks) {

@@ -1,5 +1,8 @@
 package com.personalai.assistant.ai
 
+import com.personalai.assistant.data.local.entity.RecordingStatus
+import com.personalai.assistant.data.local.entity.TaskStatus
+
 import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
@@ -55,7 +58,7 @@ class Batch7FeaturesTest {
             TaskEntity(
                 title = "Send finalized quotation to client",
                 description = "Follow up on pricing review",
-                status = "PENDING",
+                status = TaskStatus.PENDING,
                 assignedPerson = "Loveneet"
             )
         )
@@ -79,7 +82,7 @@ class Batch7FeaturesTest {
                 filePath = "/dummy/rec1.wav",
                 startTimestamp = 10000L,
                 durationMs = 30000L,
-                status = "COMPLETED"
+                status = RecordingStatus.COMPLETED
             )
         )
         repository.insertTranscripts(
@@ -118,7 +121,7 @@ class Batch7FeaturesTest {
             date = today,
             todayRecordings = emptyList(),
             todayMeetings = emptyList(),
-            allTasks = listOf(TaskEntity(title = "Test Task", status = "PENDING")),
+            allTasks = listOf(TaskEntity(title = "Test Task", status = TaskStatus.PENDING)),
             todayNotes = emptyList()
         )
 

@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.personalai.assistant.data.local.entity.MeetingEntity
 import com.personalai.assistant.data.local.entity.TaskEntity
+import com.personalai.assistant.data.local.entity.TaskStatus
 import com.personalai.assistant.data.local.entity.TranscriptEntity
 import com.personalai.assistant.data.repository.AppRepository
 import com.personalai.assistant.export.ExportManager
@@ -44,9 +45,9 @@ class MeetingDetailsViewModel(
         }
     }
 
-    fun toggleTaskStatus(taskId: Long, currentStatus: String) {
+    fun toggleTaskStatus(taskId: Long, currentStatus: TaskStatus) {
         viewModelScope.launch {
-            val newStatus = if (currentStatus == "COMPLETED") "PENDING" else "COMPLETED"
+            val newStatus = if (currentStatus.isCompleted) TaskStatus.PENDING else TaskStatus.COMPLETED
             repository.updateTaskStatus(taskId, newStatus)
         }
     }
@@ -59,7 +60,8 @@ class MeetingDetailsViewModel(
                     title = title,
                     sourceMeetingId = meetingId,
                     sourceRecordingId = m.sourceRecordingId,
-                    assignedPerson = assignee?.ifBlank { null }
+                    assignedPerson = assignee?.ifBlank { null },
+                    status = TaskStatus.PENDING
                 )
             )
         }
