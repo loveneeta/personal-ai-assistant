@@ -10,7 +10,6 @@ import com.personalai.assistant.data.repository.AppRepository
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import java.util.regex.Pattern
 
 data class Citation(
     val type: String, // "RECORDING", "MEETING", "TASK", "NOTE"
@@ -30,6 +29,14 @@ data class ChatMessage(
 
 class LocalRagChatEngine(private val repository: AppRepository) {
 
+    private var pendingIntent: UserIntent? = null
+
+    fun getPendingIntent(): UserIntent? = pendingIntent
+
+    fun clearPendingIntent() {
+        pendingIntent = null
+    }
+
     private val STOP_WORDS = setOf(
         "what", "when", "where", "which", "who", "whom", "whose", "why", "how",
         "tell", "show", "give", "find", "search", "about", "with", "from", "that", "this",
@@ -44,201 +51,308 @@ class LocalRagChatEngine(private val repository: AppRepository) {
 
     suspend fun answerQuery(query: String): ChatMessage {
         val trimmed = query.trim()
-        val lower = trimmed.lowercase(Locale.ROOT)
+        val classified = IntentClassifier.classify(trimmed, pendingIntent)
+
+        // 1. Negative Intent
+        if (classified is UserIntent.NegativeRequest) {
+            pendingIntent = null
+            return ChatMessage(
+                isUser = false,
+                content = classified.explanation,
+                citations = emptyList()
+            )
+        }
+
+        // 2. Ambiguous or Contradictory Intent
+        if (classified is UserIntent.AmbiguousOrContradictory) {
+            return ChatMessage(
+                isUser = false,
+                content = "I cannot process this request: ${classified.reason}",
+                citations = emptyList()
+            )
+        }
+
+        // 3. User Confirmation on Pending Action
+        if (classified is UserIntent.Confirmation) {
+            val pending = pendingIntent
+            pendingIntent = null
+
+            if (pending == null) {
+                return ChatMessage(
+                    isUser = false,
+                    content = "There is no pending action to confirm.",
+                    citations = emptyList()
+                )
+            }
+
+            if (!classified.isConfirmed) {
+                return ChatMessage(
+                    isUser = false,
+                    content = "Action cancelled. No records were modified.",
+                    citations = emptyList()
+                )
+            }
+
+            // Confirmed execution
+            return when (pending) {
+                is UserIntent.CreateMeeting -> {
+                    val title = pending.title ?: "Meeting"
+                    val startMs = pending.startEpochMs ?: System.currentTimeMillis()
+                    val newMeetingId = repository.insertMeeting(
+                        MeetingEntity(
+                            title = title,
+                            startTimestamp = startMs,
+                            summary = "Scheduled via voice confirmation: '$title'"
+                        )
+                    )
+                    val formattedDate = SimpleDateFormat("EEEE, MMM d 'at' h:mm a", Locale.getDefault()).format(Date(startMs))
+                    ChatMessage(
+                        isUser = false,
+                        content = "Confirmed. I have scheduled '$title' for $formattedDate.",
+                        citations = listOf(
+                            Citation(type = "MEETING", referenceId = newMeetingId, title = title, snippet = "Scheduled for $formattedDate")
+                        )
+                    )
+                }
+
+                is UserIntent.CreateTask -> {
+                    val title = pending.title ?: "New Task"
+                    val newTaskId = repository.insertTask(
+                        TaskEntity(
+                            title = title,
+                            status = TaskStatus.PENDING
+                        )
+                    )
+                    ChatMessage(
+                        isUser = false,
+                        content = "Confirmed. Added task: '$title' to your pending list.",
+                        citations = listOf(
+                            Citation(type = "TASK", referenceId = newTaskId, title = title, snippet = "Status: PENDING")
+                        )
+                    )
+                }
+
+                is UserIntent.CreateNote -> {
+                    val content = pending.content ?: ""
+                    val newNoteId = repository.insertNote(
+                        NoteEntity(
+                            title = "Voice Note - ${SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(Date())}",
+                            content = content
+                        )
+                    )
+                    ChatMessage(
+                        isUser = false,
+                        content = "Confirmed. Saved note into your local memory.",
+                        citations = listOf(
+                            Citation(type = "NOTE", referenceId = newNoteId, title = "Voice Note", snippet = content)
+                        )
+                    )
+                }
+
+                else -> {
+                    ChatMessage(
+                        isUser = false,
+                        content = "Action completed.",
+                        citations = emptyList()
+                    )
+                }
+            }
+        }
+
+        // 4. Create Meeting Intent with Missing Field Extraction & Confirmation Gating
+        if (classified is UserIntent.CreateMeeting) {
+            if (classified.title.isNullOrBlank()) {
+                return ChatMessage(
+                    isUser = false,
+                    content = "What is the title or subject of the meeting you would like to schedule?",
+                    citations = emptyList()
+                )
+            }
+
+            if (classified.startEpochMs == null) {
+                return ChatMessage(
+                    isUser = false,
+                    content = "When would you like to schedule the meeting '${classified.title}'? Please specify a date and time.",
+                    citations = emptyList()
+                )
+            }
+
+            // Both required fields are present: require explicit confirmation before execution
+            pendingIntent = classified
+            val formattedDate = SimpleDateFormat("EEEE, MMM d 'at' h:mm a", Locale.getDefault()).format(Date(classified.startEpochMs))
+            return ChatMessage(
+                isUser = false,
+                content = "I have prepared the meeting: '${classified.title}' for $formattedDate. Would you like me to confirm and create this meeting?",
+                citations = emptyList()
+            )
+        }
+
+        // 5. Create Task Intent with Missing Field Extraction & Confirmation Gating
+        if (classified is UserIntent.CreateTask) {
+            if (classified.title.isNullOrBlank()) {
+                return ChatMessage(
+                    isUser = false,
+                    content = "What task would you like me to add?",
+                    citations = emptyList()
+                )
+            }
+
+            // Require explicit confirmation before writing to database
+            pendingIntent = classified
+            return ChatMessage(
+                isUser = false,
+                content = "I have prepared the task: '${classified.title}'. Should I confirm and add this to your tasks?",
+                citations = emptyList()
+            )
+        }
+
+        // 6. Create Note Intent
+        if (classified is UserIntent.CreateNote) {
+            if (classified.content.isNullOrBlank()) {
+                return ChatMessage(
+                    isUser = false,
+                    content = "What note would you like me to save?",
+                    citations = emptyList()
+                )
+            }
+
+            pendingIntent = classified
+            return ChatMessage(
+                isUser = false,
+                content = "Would you like me to confirm and save this note: '${classified.content}'?",
+                citations = emptyList()
+            )
+        }
+
+        // 7. Information Queries (Tasks, Meetings, Notes, RAG)
+        if (classified is UserIntent.InformationQuery) {
+            return when (classified.queryType) {
+                QueryType.TASKS -> handleTasksQuery()
+                QueryType.MEETINGS -> handleMeetingsQuery()
+                QueryType.NOTES -> handleNotesQuery()
+                QueryType.GENERAL_RAG -> handleGeneralRagSearch(trimmed)
+            }
+        }
+
+        return handleGeneralRagSearch(trimmed)
+    }
+
+    private suspend fun handleTasksQuery(): ChatMessage {
         val citations = mutableListOf<Citation>()
-
-        // Protocol A: Meeting Scheduling Intent (English / Hinglish)
-        if ((lower.contains("schedule") && lower.contains("meeting")) ||
-            lower.contains("meeting schedule") || lower.contains("meeting set") || lower.contains("meeting create")
-        ) {
-            val cal = java.util.Calendar.getInstance()
-            if (lower.contains("kal") || lower.contains("tomorrow")) {
-                cal.add(java.util.Calendar.DAY_OF_YEAR, 1)
-            }
-            if (lower.contains("morning") || lower.contains("subah")) {
-                cal.set(java.util.Calendar.HOUR_OF_DAY, 10)
-                cal.set(java.util.Calendar.MINUTE, 0)
-            } else if (lower.contains("afternoon") || lower.contains("dophar")) {
-                cal.set(java.util.Calendar.HOUR_OF_DAY, 14)
-                cal.set(java.util.Calendar.MINUTE, 30)
-            } else if (lower.contains("evening") || lower.contains("shaam")) {
-                cal.set(java.util.Calendar.HOUR_OF_DAY, 17)
-                cal.set(java.util.Calendar.MINUTE, 0)
-            }
-
-            val meetingTitle = "Discussion & Strategy Sync"
-            val newMeetingId = repository.insertMeeting(
-                MeetingEntity(
-                    title = meetingTitle,
-                    startTimestamp = cal.timeInMillis,
-                    summary = "Voice-scheduled protocol: '$trimmed'"
-                )
-            )
-            val formattedDate = SimpleDateFormat("EEEE, MMM d 'at' h:mm a", Locale.getDefault()).format(Date(cal.timeInMillis))
-            return ChatMessage(
-                isUser = false,
-                content = "Protocol executed, Commander. I have scheduled '$meetingTitle' for $formattedDate.",
-                citations = listOf(
-                    Citation(type = "MEETING", referenceId = newMeetingId, title = meetingTitle, snippet = "Scheduled for $formattedDate")
-                )
-            )
-        }
-
-        // Protocol B: Task / Action Item Creation
-        if (lower.startsWith("add task") || lower.startsWith("create task") || lower.startsWith("task:") ||
-            lower.contains("task add karo") || lower.contains("action item:")
-        ) {
-            val cleanTitle = trimmed
-                .replaceFirst(Regex("^(add task|create task|task:|task add karo|action item:)", RegexOption.IGNORE_CASE), "")
-                .trim().ifEmpty { "Follow-up Action" }
-
-            val newTaskId = repository.insertTask(
-                TaskEntity(
-                    title = cleanTitle,
-                    status = TaskStatus.PENDING
-                )
-            )
-            return ChatMessage(
-                isUser = false,
-                content = "Action item recorded. Added task: '$cleanTitle' to your pending list.",
-                citations = listOf(
-                    Citation(type = "TASK", referenceId = newTaskId, title = cleanTitle, snippet = "Status: PENDING")
-                )
-            )
-        }
-
-        // Protocol C: Memory Note Persistence
-        if (lower.contains("save kar do") || lower.contains("save note") || lower.contains("note this") || lower.contains("note down")) {
-            val cleanNote = trimmed
-                .replaceFirst(Regex("^(save note|note this down|note down|note:|save kar do)", RegexOption.IGNORE_CASE), "")
-                .trim().ifEmpty { trimmed }
-
-            val newNoteId = repository.insertNote(
-                NoteEntity(
-                    title = "Voice Note - ${SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(Date())}",
-                    content = cleanNote
-                )
-            )
-            return ChatMessage(
-                isUser = false,
-                content = "I have saved this note into your local memory.",
-                citations = listOf(
-                    Citation(type = "NOTE", referenceId = newNoteId, title = "Voice Note", snippet = cleanNote)
-                )
-            )
-        }
-
-        // 1. Check for specific intent: Listing pending tasks
-        if (lower.contains("task") || lower.contains("to do") || lower.contains("action item") || lower.contains("kaam")) {
-            val allTasks = repository.getAllTasks()
-            val pending = allTasks.filter { !it.status.isCompleted }
-            if (pending.isNotEmpty()) {
-                val sb = StringBuilder("Here are your pending action items (${pending.size}):\n\n")
-                for ((idx, task) in pending.withIndex()) {
-                    val assignee = if (!task.assignedPerson.isNullOrBlank()) " (Assigned to: ${task.assignedPerson})" else ""
-                    val due = if (task.dueDate != null) {
-                        " • Due: ${SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(Date(task.dueDate))}"
-                    } else ""
-                    sb.append("${idx + 1}. **${task.title}**$assignee$due\n")
-                    citations.add(
-                        Citation(
-                            type = "TASK",
-                            referenceId = task.id,
-                            title = task.title,
-                            snippet = task.description ?: "Status: ${task.status}"
-                        )
+        val allTasks = repository.getAllTasks()
+        val pending = allTasks.filter { !it.status.isCompleted }
+        return if (pending.isNotEmpty()) {
+            val sb = StringBuilder("Here are your pending action items (${pending.size}):\n\n")
+            for ((idx, task) in pending.withIndex()) {
+                val assignee = if (!task.assignedPerson.isNullOrBlank()) " (Assigned to: ${task.assignedPerson})" else ""
+                val due = if (task.dueDate != null) {
+                    " • Due: ${SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(Date(task.dueDate))}"
+                } else ""
+                sb.append("${idx + 1}. **${task.title}**$assignee$due\n")
+                citations.add(
+                    Citation(
+                        type = "TASK",
+                        referenceId = task.id,
+                        title = task.title,
+                        snippet = task.description ?: "Status: ${task.status}"
                     )
-                }
-                return ChatMessage(
-                    isUser = false,
-                    content = sb.toString().trim(),
-                    citations = citations
-                )
-            } else if (allTasks.isNotEmpty()) {
-                return ChatMessage(
-                    isUser = false,
-                    content = "All ${allTasks.size} tasks in your workspace are marked as COMPLETED! Great job.",
-                    citations = emptyList()
-                )
-            } else {
-                return ChatMessage(
-                    isUser = false,
-                    content = "You have no action items recorded in your local memory yet. Tasks are automatically extracted from your meetings or voice notes.",
-                    citations = emptyList()
                 )
             }
+            ChatMessage(
+                isUser = false,
+                content = sb.toString().trim(),
+                citations = citations
+            )
+        } else if (allTasks.isNotEmpty()) {
+            ChatMessage(
+                isUser = false,
+                content = "All ${allTasks.size} tasks in your workspace are marked as COMPLETED! Great job.",
+                citations = emptyList()
+            )
+        } else {
+            ChatMessage(
+                isUser = false,
+                content = "You have no action items recorded in your local memory yet. Tasks are automatically extracted from your meetings or voice notes.",
+                citations = emptyList()
+            )
         }
+    }
 
-        // 2. Check for specific intent: Recent meetings
-        if (lower.contains("meeting") || lower.contains("standup") || lower.contains("sync") || lower.contains("baithak")) {
-            val meetings = repository.getAllMeetings()
-            if (meetings.isNotEmpty()) {
-                val recent = meetings.take(3)
-                val sb = StringBuilder("Here are your recent meetings:\n\n")
-                for (m in recent) {
-                    val date = SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(Date(m.startTimestamp))
-                    sb.append("• **${m.title}** ($date)\n")
-                    if (!m.summary.isNullOrBlank()) {
-                        sb.append("  Summary: ${m.summary.take(150)}...\n")
-                    }
-                    citations.add(
-                        Citation(
-                            type = "MEETING",
-                            referenceId = m.id,
-                            title = m.title,
-                            snippet = m.summary
-                        )
+    private suspend fun handleMeetingsQuery(): ChatMessage {
+        val citations = mutableListOf<Citation>()
+        val meetings = repository.getAllMeetings()
+        return if (meetings.isNotEmpty()) {
+            val recent = meetings.take(3)
+            val sb = StringBuilder("Here are your recent meetings:\n\n")
+            for (m in recent) {
+                val date = SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(Date(m.startTimestamp))
+                sb.append("• **${m.title}** ($date)\n")
+                if (!m.summary.isNullOrBlank()) {
+                    sb.append("  Summary: ${m.summary.take(150)}...\n")
+                }
+                citations.add(
+                    Citation(
+                        type = "MEETING",
+                        referenceId = m.id,
+                        title = m.title,
+                        snippet = m.summary
                     )
-                }
-                return ChatMessage(
-                    isUser = false,
-                    content = sb.toString().trim(),
-                    citations = citations
-                )
-            } else {
-                return ChatMessage(
-                    isUser = false,
-                    content = "No meetings found in your local database yet. Recorded audio sessions can be converted into meeting minutes.",
-                    citations = emptyList()
                 )
             }
+            ChatMessage(
+                isUser = false,
+                content = sb.toString().trim(),
+                citations = citations
+            )
+        } else {
+            ChatMessage(
+                isUser = false,
+                content = "No meetings found in your local database yet. Recorded audio sessions can be converted into meeting minutes.",
+                citations = emptyList()
+            )
         }
+    }
 
-        // 3. Check for specific intent: Notes
-        if (lower.contains("notes") || lower.contains("note") || lower.contains("memo")) {
-            val notes = repository.getAllNotes()
-            if (notes.isNotEmpty()) {
-                val recent = notes.take(4)
-                val sb = StringBuilder("Here are your recent personal notes:\n\n")
-                for (n in recent) {
-                    val date = SimpleDateFormat("MMM d", Locale.getDefault()).format(Date(n.createdAt))
-                    sb.append("• **${n.title}** ($date): ${n.content.take(120)}...\n")
-                    citations.add(
-                        Citation(
-                            type = "NOTE",
-                            referenceId = n.id,
-                            title = n.title,
-                            snippet = n.content
-                        )
+    private suspend fun handleNotesQuery(): ChatMessage {
+        val citations = mutableListOf<Citation>()
+        val notes = repository.getAllNotes()
+        return if (notes.isNotEmpty()) {
+            val recent = notes.take(4)
+            val sb = StringBuilder("Here are your recent personal notes:\n\n")
+            for (n in recent) {
+                val date = SimpleDateFormat("MMM d", Locale.getDefault()).format(Date(n.createdAt))
+                sb.append("• **${n.title}** ($date): ${n.content.take(120)}...\n")
+                citations.add(
+                    Citation(
+                        type = "NOTE",
+                        referenceId = n.id,
+                        title = n.title,
+                        snippet = n.content
                     )
-                }
-                return ChatMessage(
-                    isUser = false,
-                    content = sb.toString().trim(),
-                    citations = citations
                 )
             }
+            ChatMessage(
+                isUser = false,
+                content = sb.toString().trim(),
+                citations = citations
+            )
+        } else {
+            ChatMessage(
+                isUser = false,
+                content = "No personal notes found in your local database yet.",
+                citations = emptyList()
+            )
         }
+    }
 
-        // 4. General RAG Search across transcripts, notes, and meetings
-        // Preserves both Latin letters/digits and Unicode Devanagari script (\p{L}\p{N})
+    private suspend fun handleGeneralRagSearch(trimmed: String): ChatMessage {
+        val citations = mutableListOf<Citation>()
         val cleanTerms = trimmed.replace(Regex("[^\\p{L}\\p{N} ]"), " ")
             .split(Regex("\\s+"))
             .filter { it.length >= 2 }
 
         val candidateTerms = cleanTerms.filter { it.lowercase(Locale.ROOT) !in STOP_WORDS }
         val searchWords = if (candidateTerms.isNotEmpty()) candidateTerms else cleanTerms
-        val primaryTerm = searchWords.firstOrNull() ?: trimmed
 
         val matchedTranscripts = mutableListOf<TranscriptEntity>()
         val matchedNotes = mutableListOf<NoteEntity>()

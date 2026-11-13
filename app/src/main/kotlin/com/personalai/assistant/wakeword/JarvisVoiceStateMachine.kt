@@ -18,8 +18,11 @@ import com.personalai.assistant.ai.ChatMessage
 import com.personalai.assistant.ai.LocalRagChatEngine
 import com.personalai.assistant.data.local.entity.WakeEventEntity
 import com.personalai.assistant.data.repository.AppRepository
+import com.personalai.assistant.transcription.AsrEngine
+import com.personalai.assistant.transcription.MultilingualOfflineAsrEngine
 import com.personalai.assistant.transcription.SentenceReconstructor
 import com.personalai.assistant.transcription.models.ModelManager
+import com.personalai.assistant.transcription.models.TranscriptionLanguageMode
 import org.json.JSONObject
 import org.vosk.Model
 import org.vosk.Recognizer
@@ -89,7 +92,6 @@ class JarvisVoiceStateMachine(
     private val currentTtsSessionId = AtomicLong(0L)
     private val captureLock = Any()
 
-    private val fallbackSpotter = AdaptivePhoneticSpotter()
     private var lastWakeTimestamp = 0L
 
     // Configurable settings
@@ -99,6 +101,7 @@ class JarvisVoiceStateMachine(
 
     private val actionExecutor = AndroidActionExecutor(context)
     private val ragEngine = LocalRagChatEngine(repository)
+    private val asrEngine: AsrEngine = MultilingualOfflineAsrEngine(context, ModelManager.getInstance(context))
     private var textToSpeech: TextToSpeech? = null
     private val isTtsSpeaking = AtomicBoolean(false)
 
@@ -148,8 +151,11 @@ class JarvisVoiceStateMachine(
 
         transitionTo(JarvisAudioState.STARTING)
         val ready = wakeWordEngine.initialize(configuredWakeWord, 0.7f)
-        fallbackSpotter.initialize(configuredWakeWord, 0.7f)
-        Log.i(TAG, "Initialized wake engines. Primary Vosk ready=$ready")
+        if (!ready) {
+            Log.w(TAG, "Offline wake-word model is unavailable. Speech model needs to be downloaded in Settings.")
+        } else {
+            Log.i(TAG, "Initialized wake engine: ${wakeWordEngine.engineName}")
+        }
 
         startAudioLoop()
     }
@@ -383,7 +389,8 @@ class JarvisVoiceStateMachine(
                                 val detected = if (wakeWordEngine.isReady) {
                                     wakeWordEngine.processPcmChunk(shortBuffer, read)
                                 } else {
-                                    fallbackSpotter.processPcmChunk(shortBuffer, read)
+                                    // Acoustic heuristics disabled per Phase 3 accuracy requirements
+                                    false
                                 }
                                 val now = SystemClock.elapsedRealtime()
 
@@ -699,38 +706,17 @@ class JarvisVoiceStateMachine(
     }
 
     /**
-     * Decodes 16kHz PCM audio on-device using the installed Vosk Kaldi speech model.
-     * Preserves mixed Hindi and English without cloud dependencies.
+     * Decodes 16kHz PCM audio on-device using the abstracted multilingual ASR engine.
+     * Preserves mixed Hindi and English without cloud dependencies and leverages sequential fallback.
      */
-    private fun decodePcmCommand(pcmList: List<Short>): String {
+    private suspend fun decodePcmCommand(pcmList: List<Short>): String {
         if (pcmList.size < SAMPLE_RATE * 0.5) return ""
-        val modelDir = ModelManager.getInstance(context).getActiveModelDirectory() ?: return ""
-        if (!modelDir.exists()) return ""
-
-        return try {
-            val model = Model(modelDir.absolutePath)
-            val rec = Recognizer(model, SAMPLE_RATE.toFloat())
-            rec.setWords(true)
-
-            val shortArray = pcmList.toShortArray()
-            rec.acceptWaveForm(shortArray, shortArray.size)
-            val finalJson = rec.finalResult
-            rec.close()
-            model.close()
-
-            val json = JSONObject(finalJson)
-            val rawText = json.optString("text", "").trim()
-            if (rawText.isNotEmpty()) {
-                val words = rawText.split("\\s+".toRegex()).map {
-                    com.personalai.assistant.transcription.WordToken(it, 0L, 0L, 0.95f)
-                }
-                SentenceReconstructor.formatSentence(words, "hi-en")
-            } else {
-                ""
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error decoding PCM command with local Vosk: ${e.message}")
-            ""
-        }
+        val shortArray = pcmList.toShortArray()
+        val asrResult = asrEngine.transcribePcm(
+            pcmData = shortArray,
+            sampleRate = SAMPLE_RATE,
+            languageMode = TranscriptionLanguageMode.AUTO_HINGLISH
+        )
+        return asrResult.text
     }
 }
