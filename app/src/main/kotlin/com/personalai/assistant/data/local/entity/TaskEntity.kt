@@ -7,6 +7,20 @@ import androidx.room.PrimaryKey
 
 @Entity(
     tableName = "tasks",
+    foreignKeys = [
+        ForeignKey(
+            entity = MeetingEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["sourceMeetingId"],
+            onDelete = ForeignKey.SET_NULL
+        ),
+        ForeignKey(
+            entity = RecordingEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["sourceRecordingId"],
+            onDelete = ForeignKey.SET_NULL
+        )
+    ],
     indices = [
         Index(value = ["sourceMeetingId"]),
         Index(value = ["sourceRecordingId"]),

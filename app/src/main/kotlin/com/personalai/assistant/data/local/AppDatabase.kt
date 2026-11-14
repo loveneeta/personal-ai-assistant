@@ -31,7 +31,7 @@ import com.personalai.assistant.data.local.entity.WakeEventEntity
         NoteEntity::class,
         WakeEventEntity::class
     ],
-    version = 3,
+    version = 2,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -68,12 +68,6 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        val MIGRATION_2_3 = object : Migration(2, 3) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                // TypeConverters convert enums to TEXT; SQLite schema remains compatible
-            }
-        }
-
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -81,9 +75,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "personal_ai.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
-                    .fallbackToDestructiveMigration(dropAllTables = true)
-                    .fallbackToDestructiveMigrationOnDowngrade(dropAllTables = true)
+                    .addMigrations(MIGRATION_1_2)
                     .build()
                     .also { INSTANCE = it }
             }

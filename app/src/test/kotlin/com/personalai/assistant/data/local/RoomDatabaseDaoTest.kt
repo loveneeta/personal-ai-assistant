@@ -251,4 +251,174 @@ class RoomDatabaseDaoTest {
         task = taskDao.getById(taskId)
         assertEquals(TaskStatus.COMPLETED, task?.status)
     }
+
+    @Test
+    fun database_cleanInstallVerifiesIntegrityWithoutDestructiveFallback() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val dbName = "clean_test.db"
+        context.deleteDatabase(dbName)
+
+        val db = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
+            .addMigrations(AppDatabase.MIGRATION_1_2)
+            .build()
+
+        val cursor = db.openHelper.readableDatabase.query("SELECT * FROM room_master_table")
+        assertTrue(cursor.moveToFirst())
+        val identityHash = cursor.getString(cursor.getColumnIndexOrThrow("identity_hash"))
+        assertEquals("fb80d5bdf4e5d90dccb6d2b81f723f17", identityHash)
+        cursor.close()
+        db.close()
+        context.deleteDatabase(dbName)
+    }
+
+    @Test
+    fun database_upgradeFromV1ToV2PreservesDataAndIntegrity() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val dbName = "upgrade_test.db"
+        context.deleteDatabase(dbName)
+
+        // 1. Create a version 1 database directly with SQLite
+        val helperConfig = androidx.sqlite.db.SupportSQLiteOpenHelper.Configuration.builder(context)
+            .name(dbName)
+            .callback(object : androidx.sqlite.db.SupportSQLiteOpenHelper.Callback(1) {
+                override fun onCreate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                    db.execSQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS `recordings` (
+                            `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            `title` TEXT NOT NULL,
+                            `filePath` TEXT NOT NULL,
+                            `startTimestamp` INTEGER NOT NULL,
+                            `endTimestamp` INTEGER,
+                            `durationMs` INTEGER NOT NULL,
+                            `status` TEXT NOT NULL,
+                            `fileSizeBytes` INTEGER NOT NULL,
+                            `mimeType` TEXT NOT NULL,
+                            `processingStatus` TEXT NOT NULL,
+                            `errorDetails` TEXT,
+                            `createdAt` INTEGER NOT NULL,
+                            `updatedAt` INTEGER NOT NULL
+                        )
+                        """.trimIndent()
+                    )
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_recordings_startTimestamp` ON `recordings` (`startTimestamp`)")
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_recordings_status` ON `recordings` (`status`)")
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_recordings_processingStatus` ON `recordings` (`processingStatus`)")
+
+                    db.execSQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS `meetings` (
+                            `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            `title` TEXT NOT NULL,
+                            `startTimestamp` INTEGER NOT NULL,
+                            `endTimestamp` INTEGER,
+                            `summary` TEXT,
+                            `sourceRecordingId` INTEGER,
+                            `createdAt` INTEGER NOT NULL,
+                            `updatedAt` INTEGER NOT NULL,
+                            FOREIGN KEY(`sourceRecordingId`) REFERENCES `recordings`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL
+                        )
+                        """.trimIndent()
+                    )
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_meetings_sourceRecordingId` ON `meetings` (`sourceRecordingId`)")
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_meetings_startTimestamp` ON `meetings` (`startTimestamp`)")
+
+                    db.execSQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS `tasks` (
+                            `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            `title` TEXT NOT NULL,
+                            `description` TEXT,
+                            `sourceMeetingId` INTEGER,
+                            `sourceRecordingId` INTEGER,
+                            `dueDate` INTEGER,
+                            `assignedPerson` TEXT,
+                            `status` TEXT NOT NULL,
+                            `createdAt` INTEGER NOT NULL,
+                            FOREIGN KEY(`sourceMeetingId`) REFERENCES `meetings`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL,
+                            FOREIGN KEY(`sourceRecordingId`) REFERENCES `recordings`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL
+                        )
+                        """.trimIndent()
+                    )
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_tasks_sourceMeetingId` ON `tasks` (`sourceMeetingId`)")
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_tasks_sourceRecordingId` ON `tasks` (`sourceRecordingId`)")
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_tasks_dueDate` ON `tasks` (`dueDate`)")
+
+                    db.execSQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS `transcripts` (
+                            `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            `recordingId` INTEGER NOT NULL,
+                            `segmentIndex` INTEGER NOT NULL,
+                            `startOffsetMs` INTEGER NOT NULL,
+                            `endOffsetMs` INTEGER NOT NULL,
+                            `text` TEXT NOT NULL,
+                            `language` TEXT NOT NULL,
+                            `confidence` REAL,
+                            `reviewStatus` TEXT NOT NULL,
+                            FOREIGN KEY(`recordingId`) REFERENCES `recordings`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                        )
+                        """.trimIndent()
+                    )
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_transcripts_recordingId` ON `transcripts` (`recordingId`)")
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_transcripts_startOffsetMs` ON `transcripts` (`startOffsetMs`)")
+
+                    db.execSQL("CREATE VIRTUAL TABLE IF NOT EXISTS `transcripts_fts` USING FTS4(`text` TEXT, `language` TEXT, content=`transcripts`)")
+
+                    db.execSQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS `notes` (
+                            `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            `title` TEXT NOT NULL,
+                            `content` TEXT NOT NULL,
+                            `linkedRecordingId` INTEGER,
+                            `linkedMeetingId` INTEGER,
+                            `isPinned` INTEGER NOT NULL,
+                            `createdAt` INTEGER NOT NULL,
+                            `updatedAt` INTEGER NOT NULL,
+                            FOREIGN KEY(`linkedRecordingId`) REFERENCES `recordings`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL,
+                            FOREIGN KEY(`linkedMeetingId`) REFERENCES `meetings`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL
+                        )
+                        """.trimIndent()
+                    )
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_notes_linkedRecordingId` ON `notes` (`linkedRecordingId`)")
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_notes_linkedMeetingId` ON `notes` (`linkedMeetingId`)")
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_notes_isPinned` ON `notes` (`isPinned`)")
+
+                    // Insert room master table for v1
+                    db.execSQL("CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)")
+                    db.execSQL("INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'v1_hash')")
+
+                    db.execSQL("INSERT INTO recordings (id, title, filePath, startTimestamp, durationMs, status, fileSizeBytes, mimeType, processingStatus, createdAt, updatedAt) VALUES (1, 'V1 Rec', '/path', 1000, 5000, 'COMPLETED', 1024, 'audio/wav', 'COMPLETED', 1000, 1000)")
+                    db.execSQL("INSERT INTO tasks (id, title, status, createdAt) VALUES (1, 'V1 Task', 'PENDING', 1000)")
+                }
+                override fun onUpgrade(db: androidx.sqlite.db.SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+            })
+            .build()
+        val sqliteDb = androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory().create(helperConfig).writableDatabase
+        sqliteDb.close()
+
+        // 2. Open with AppDatabase (version 2) with MIGRATION_1_2 without destructive fallback
+        val upgradedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
+            .addMigrations(AppDatabase.MIGRATION_1_2)
+            .build()
+
+        val task = upgradedDb.taskDao().getById(1)
+        assertNotNull(task)
+        assertEquals("V1 Task", task?.title)
+        assertEquals(TaskStatus.PENDING, task?.status)
+
+        val rec = upgradedDb.recordingDao().getById(1)
+        assertNotNull(rec)
+        assertEquals("V1 Rec", rec?.title)
+
+        // Wake events table must exist and be writable
+        val wakeCursor = upgradedDb.openHelper.readableDatabase.query("SELECT count(*) FROM wake_events")
+        assertTrue(wakeCursor.moveToFirst())
+        assertEquals(0, wakeCursor.getInt(0))
+        wakeCursor.close()
+
+        upgradedDb.close()
+        context.deleteDatabase(dbName)
+    }
 }
