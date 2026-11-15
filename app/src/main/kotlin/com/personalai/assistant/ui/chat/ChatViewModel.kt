@@ -3,10 +3,15 @@ package com.personalai.assistant.ui.chat
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.personalai.assistant.actions.AndroidActionExecutor
+import com.personalai.assistant.actions.AssistantAction
 import com.personalai.assistant.ai.ChatMessage
 import com.personalai.assistant.ai.LocalRagChatEngine
 import com.personalai.assistant.ai.OpenJarvisManager
+import com.personalai.assistant.data.local.entity.ChatMessageEntity
 import com.personalai.assistant.data.repository.AppRepository
+import com.personalai.assistant.orchestrator.AgentExecutionResult
+import com.personalai.assistant.orchestrator.MasterJarvisAgent
 import com.personalai.assistant.playback.JarvisTtsEngine
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -22,25 +27,43 @@ class ChatViewModel(
 ) : ViewModel() {
 
     private val chatEngine = LocalRagChatEngine(repository, context)
+    private val actionExecutor = context?.let { AndroidActionExecutor(it) }
 
     private val _isOpenJarvisActive = MutableStateFlow(
         context?.let { OpenJarvisManager.isEnabled(it) } ?: false
     )
     val isOpenJarvisActive: StateFlow<Boolean> = _isOpenJarvisActive.asStateFlow()
 
-    private val _messages = MutableStateFlow<List<ChatMessage>>(
-        listOf(
-            ChatMessage(
-                isUser = false,
-                content = if (context != null && OpenJarvisManager.isEnabled(context)) {
-                    "J.A.R.V.I.S. Neural Bridge connected to OpenJarvis. Ready to answer using NVIDIA Nemotron reasoning grounded in your local memory."
-                } else {
-                    "Hello! I am your 100% offline Personal AI Assistant. Ask me anything about your recorded meetings, action items, or notes. I answer strictly based on your local memory."
-                }
-            )
-        )
-    )
+    private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
     val messages: StateFlow<List<ChatMessage>> = _messages.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            repository.getAllChatMessagesFlow().collect { entities ->
+                if (entities.isNotEmpty()) {
+                    _messages.value = entities.map { entity ->
+                        ChatMessage(
+                            id = entity.id,
+                            isUser = entity.isUser,
+                            content = entity.content,
+                            timestamp = entity.timestamp
+                        )
+                    }
+                } else {
+                    _messages.value = listOf(
+                        ChatMessage(
+                            isUser = false,
+                            content = if (context != null && OpenJarvisManager.isEnabled(context)) {
+                                "J.A.R.V.I.S. Neural Bridge connected to OpenJarvis. Ready to answer using NVIDIA Nemotron reasoning grounded in your local memory."
+                            } else {
+                                "Hello! I am your 100% offline Personal AI Assistant. Ask me anything about your recorded meetings, action items, or notes. I answer strictly based on your local memory."
+                            }
+                        )
+                    )
+                }
+            }
+        }
+    }
 
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
@@ -77,36 +100,66 @@ class ChatViewModel(
         val trimmed = prompt.trim()
         if (trimmed.isEmpty()) return
 
-        val userMsg = ChatMessage(isUser = true, content = trimmed)
-        _messages.value = _messages.value + userMsg
         _isLoading.value = true
 
         viewModelScope.launch {
             try {
+                // Persist user message to conversational memory
+                repository.saveChatMessage(isUser = true, content = trimmed)
+
+                if (context != null) {
+                    // 1. Evaluate Master Jarvis Agent commands (WhatsApp, SMS, Phone, Gmail, Calendar, Device)
+                    val masterAgent = MasterJarvisAgent.getInstance(context)
+                    val result = masterAgent.executeCommand(trimmed)
+                    val actionFeedback: String? = when (result) {
+                        is AgentExecutionResult.Immediate -> result.feedback
+                        is AgentExecutionResult.StagedForApproval -> result.message
+                        is AgentExecutionResult.Handled -> result.feedback
+                        is AgentExecutionResult.Unhandled -> null
+                    }
+
+                    if (actionFeedback != null) {
+                        repository.saveChatMessage(isUser = false, content = actionFeedback)
+                        if (_isVoiceOutputEnabled.value) {
+                            JarvisTtsEngine.getInstance(context).speak(actionFeedback)
+                        }
+                        return@launch
+                    }
+
+                    // 2. Evaluate Android actions (Apps, Settings, Alarms, Timers)
+                    val parsedAction = actionExecutor?.parseAction(trimmed) ?: AssistantAction.None
+                    if (parsedAction !is AssistantAction.None) {
+                        val actionResult = actionExecutor!!.execute(parsedAction)
+                        repository.saveChatMessage(isUser = false, content = actionResult.spokenFeedback)
+                        if (_isVoiceOutputEnabled.value) {
+                            JarvisTtsEngine.getInstance(context).speak(actionResult.spokenFeedback)
+                        }
+                        return@launch
+                    }
+                }
+
                 val openJarvisEnabled = context != null && OpenJarvisManager.isEnabled(context)
                 val replyContent: String
                 if (openJarvisEnabled) {
                     val localContext = buildGroundingContext(trimmed)
-                    val result = OpenJarvisManager.query(context, trimmed, localContext)
+                    val recentTurns = repository.getRecentChatContext(6).reversed().map {
+                        (if (it.isUser) "user" else "assistant") to it.content
+                    }
+                    val result = OpenJarvisManager.query(context, trimmed, localContext, recentTurns)
                     if (result.isSuccess) {
                         replyContent = result.getOrThrow()
-                        _messages.value = _messages.value + ChatMessage(
-                            isUser = false,
-                            content = replyContent
-                        )
+                        repository.saveChatMessage(isUser = false, content = replyContent)
                     } else {
                         // Fall back to local RAG if OpenJarvis is offline/unreachable
                         val offlineFallback = chatEngine.answerQuery(trimmed)
                         val note = "*(OpenJarvis offline: ${result.exceptionOrNull()?.message ?: "unreachable"}, switched to on-device RAG)*\n\n"
                         replyContent = note + offlineFallback.content
-                        _messages.value = _messages.value + offlineFallback.copy(
-                            content = replyContent
-                        )
+                        repository.saveChatMessage(isUser = false, content = replyContent)
                     }
                 } else {
                     val assistantMsg = chatEngine.answerQuery(trimmed)
                     replyContent = assistantMsg.content
-                    _messages.value = _messages.value + assistantMsg
+                    repository.saveChatMessage(isUser = false, content = replyContent)
                 }
 
                 // Vocalize AI response via on-device TTS
@@ -115,10 +168,7 @@ class ChatViewModel(
                 }
             } catch (e: Exception) {
                 val err = "Sorry, an error occurred while processing your request: ${e.message}"
-                _messages.value = _messages.value + ChatMessage(
-                    isUser = false,
-                    content = err
-                )
+                repository.saveChatMessage(isUser = false, content = err)
                 if (_isVoiceOutputEnabled.value && context != null) {
                     JarvisTtsEngine.getInstance(context).speak(err)
                 }
@@ -175,11 +225,8 @@ class ChatViewModel(
     }
 
     fun clearHistory() {
-        _messages.value = listOf(
-            ChatMessage(
-                isUser = false,
-                content = "Chat cleared. What would you like to review from your voice memory?"
-            )
-        )
+        viewModelScope.launch {
+            repository.clearChatHistory()
+        }
     }
 }

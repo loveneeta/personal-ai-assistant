@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import com.personalai.assistant.integrations.device.DeviceAgent
 import android.hardware.camera2.CameraManager
 import android.media.AudioManager
 import android.net.Uri
@@ -189,65 +190,37 @@ class AndroidActionExecutor(private val context: Context) {
             }
 
             is AssistantAction.ToggleFlashlight -> {
-                try {
-                    val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
-                    val cameraId = cameraManager?.cameraIdList?.firstOrNull()
-                    if (cameraManager != null && cameraId != null) {
-                        cameraManager.setTorchMode(cameraId, action.enable)
-                        val stateStr = if (action.enable) "turned on" else "turned off"
-                        ActionResult(
-                            handled = true,
-                            action = action,
-                            spokenFeedback = "Flashlight $stateStr, Commander."
-                        )
-                    } else {
-                        ActionResult(
-                            handled = false,
-                            action = action,
-                            spokenFeedback = "Flashlight hardware is unavailable on this device."
-                        )
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to toggle flashlight: ${e.message}")
+                val success = DeviceAgent(context).toggleFlashlight(action.enable)
+                val stateStr = if (action.enable) "turned on" else "turned off"
+                if (success) {
+                    ActionResult(
+                        handled = true,
+                        action = action,
+                        spokenFeedback = "Flashlight $stateStr, Commander."
+                    )
+                } else {
                     ActionResult(
                         handled = false,
                         action = action,
-                        spokenFeedback = "I could not toggle the flashlight."
+                        spokenFeedback = "Flashlight hardware is unavailable on this device."
                     )
                 }
             }
 
             is AssistantAction.CheckBatteryStatus -> {
-                try {
-                    val ifilter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
-                    val batteryStatus = context.registerReceiver(null, ifilter)
-                    val level = batteryStatus?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
-                    val scale = batteryStatus?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
-                    val batteryPct = if (level >= 0 && scale > 0) (level * 100 / scale) else -1
-
-                    val status = batteryStatus?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
-                    val isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
-                            status == BatteryManager.BATTERY_STATUS_FULL
-                    val chargeStatusStr = if (isCharging) "and currently charging" else "not charging"
-
-                    if (batteryPct >= 0) {
-                        ActionResult(
-                            handled = true,
-                            action = action,
-                            spokenFeedback = "Battery level is at $batteryPct percent, $chargeStatusStr, Commander."
-                        )
-                    } else {
-                        ActionResult(
-                            handled = true,
-                            action = action,
-                            spokenFeedback = "Battery power level is normal, Commander."
-                        )
-                    }
-                } catch (e: Exception) {
+                val diag = DeviceAgent(context).getDeviceStatus()
+                val chargeStatusStr = if (diag.isCharging) "and currently charging" else "not charging"
+                if (diag.batteryPct >= 0) {
                     ActionResult(
-                        handled = false,
+                        handled = true,
                         action = action,
-                        spokenFeedback = "Battery status information is unavailable."
+                        spokenFeedback = "Battery level is at ${diag.batteryPct} percent, $chargeStatusStr, Commander."
+                    )
+                } else {
+                    ActionResult(
+                        handled = true,
+                        action = action,
+                        spokenFeedback = "Battery power level is normal, Commander."
                     )
                 }
             }

@@ -2,6 +2,7 @@ package com.personalai.assistant.data.repository
 
 import android.content.Context
 import com.personalai.assistant.data.local.AppDatabase
+import com.personalai.assistant.data.local.entity.ChatMessageEntity
 import com.personalai.assistant.data.local.entity.MeetingEntity
 import com.personalai.assistant.data.local.entity.NoteEntity
 import com.personalai.assistant.data.local.entity.ProcessingStatus
@@ -37,6 +38,7 @@ class AppRepository(
     private val taskDao = database.taskDao()
     private val noteDao = database.noteDao()
     private val wakeEventDao = database.wakeEventDao()
+    private val chatMessageDao = database.chatMessageDao()
 
     // --- Recordings ---
     fun getAllRecordingsFlow(): Flow<List<RecordingEntity>> = recordingDao.getAllRecordingsFlow()
@@ -307,6 +309,28 @@ class AppRepository(
         meetingDao.deleteAll()
         noteDao.deleteAll()
         recordingDao.deleteAll()
+        chatMessageDao.clearAll()
+    }
+
+    // --- Chat & Conversational Memory ---
+    fun getAllChatMessagesFlow(): Flow<List<ChatMessageEntity>> = chatMessageDao.getAllMessagesFlow()
+
+    suspend fun saveChatMessage(isUser: Boolean, content: String): ChatMessageEntity = withContext(Dispatchers.IO) {
+        val entity = ChatMessageEntity(
+            isUser = isUser,
+            content = content,
+            timestamp = System.currentTimeMillis()
+        )
+        chatMessageDao.insert(entity)
+        entity
+    }
+
+    suspend fun getRecentChatContext(limit: Int = 6): List<ChatMessageEntity> = withContext(Dispatchers.IO) {
+        chatMessageDao.getRecentMessages(limit)
+    }
+
+    suspend fun clearChatHistory(): Unit = withContext(Dispatchers.IO) {
+        chatMessageDao.clearAll()
     }
 
     companion object {

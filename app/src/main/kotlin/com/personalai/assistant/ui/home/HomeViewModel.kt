@@ -194,7 +194,7 @@ class HomeViewModel(
         viewModelScope.launch {
             try {
                 // 1. Route through Master Jarvis Agent (WhatsApp, SMS, Phone, Calendar, Device)
-                val masterAgent = MasterJarvisAgent(context)
+                val masterAgent = MasterJarvisAgent.getInstance(context)
                 when (val result = masterAgent.executeCommand(trimmed)) {
                     is AgentExecutionResult.Immediate -> {
                         _lastAssistantResponse.value = result.feedback

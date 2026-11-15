@@ -8,6 +8,7 @@ import com.personalai.assistant.data.local.dao.NoteDao
 import com.personalai.assistant.data.local.dao.RecordingDao
 import com.personalai.assistant.data.local.dao.TaskDao
 import com.personalai.assistant.data.local.dao.TranscriptDao
+import com.personalai.assistant.data.local.entity.ChatMessageEntity
 import com.personalai.assistant.data.local.entity.MeetingEntity
 import com.personalai.assistant.data.local.entity.NoteEntity
 import com.personalai.assistant.data.local.entity.RecordingEntity
@@ -259,13 +260,13 @@ class RoomDatabaseDaoTest {
         context.deleteDatabase(dbName)
 
         val db = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(AppDatabase.MIGRATION_1_2)
+            .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3)
             .build()
 
         val cursor = db.openHelper.readableDatabase.query("SELECT * FROM room_master_table")
         assertTrue(cursor.moveToFirst())
         val identityHash = cursor.getString(cursor.getColumnIndexOrThrow("identity_hash"))
-        assertEquals("fb80d5bdf4e5d90dccb6d2b81f723f17", identityHash)
+        assertEquals("4e52e5813dac10c914bb375936e68d0c", identityHash)
         cursor.close()
         db.close()
         context.deleteDatabase(dbName)
@@ -398,9 +399,9 @@ class RoomDatabaseDaoTest {
         val sqliteDb = androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory().create(helperConfig).writableDatabase
         sqliteDb.close()
 
-        // 2. Open with AppDatabase (version 2) with MIGRATION_1_2 without destructive fallback
+        // 2. Open with AppDatabase (version 3) with MIGRATION_1_2 and MIGRATION_2_3 without destructive fallback
         val upgradedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(AppDatabase.MIGRATION_1_2)
+            .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3)
             .build()
 
         val task = upgradedDb.taskDao().getById(1)
@@ -418,7 +419,31 @@ class RoomDatabaseDaoTest {
         assertEquals(0, wakeCursor.getInt(0))
         wakeCursor.close()
 
+        // Chat messages table must exist and be writable
+        val chatCursor = upgradedDb.openHelper.readableDatabase.query("SELECT count(*) FROM chat_messages")
+        assertTrue(chatCursor.moveToFirst())
+        assertEquals(0, chatCursor.getInt(0))
+        chatCursor.close()
+
         upgradedDb.close()
         context.deleteDatabase(dbName)
+    }
+
+    @Test
+    fun chatMessageDao_insertQueryAndClear() = runTest {
+        val chatDao = database.chatMessageDao()
+        val msg1 = ChatMessageEntity(id = "msg_1", isUser = true, content = "Hello JARVIS", timestamp = 1000L)
+        val msg2 = ChatMessageEntity(id = "msg_2", isUser = false, content = "Good day, sir.", timestamp = 2000L)
+        chatDao.insert(msg1)
+        chatDao.insert(msg2)
+
+        val recent = chatDao.getRecentMessages(10)
+        assertEquals(2, recent.size)
+        assertEquals("msg_2", recent[0].id) // DESC by timestamp
+
+        assertEquals(2, chatDao.getCount())
+
+        chatDao.clearAll()
+        assertEquals(0, chatDao.getCount())
     }
 }

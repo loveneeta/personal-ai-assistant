@@ -190,6 +190,10 @@ class AndroidActionExecutorTest {
         val f2 = executor.parseAction("torch off karo")
         assertTrue(f2 is AssistantAction.ToggleFlashlight)
         assertTrue(!(f2 as AssistantAction.ToggleFlashlight).enable)
+
+        val res = executor.execute(f1)
+        assertNotNull(res)
+        assertTrue(res.spokenFeedback.contains("Flashlight"))
     }
 
     @Test

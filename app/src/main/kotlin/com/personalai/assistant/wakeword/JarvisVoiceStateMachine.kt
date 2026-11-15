@@ -565,6 +565,7 @@ class JarvisVoiceStateMachine(
 
     private fun finishCommandListening(pcmList: List<Short>) {
         commandTimeoutJob?.cancel()
+        commandTimeoutJob = null
         scope.launch {
             transitionTo(JarvisAudioState.PROCESSING)
 
@@ -595,7 +596,33 @@ class JarvisVoiceStateMachine(
                 return@launch
             }
 
-            // First evaluate native Android Actions (Apps, Settings, Dialer, Search, Maps)
+            // 1. Route through Master Jarvis Agent (WhatsApp, SMS, Phone, Gmail, Calendar, Device)
+            val masterAgent = MasterJarvisAgent.getInstance(context)
+            when (val result = masterAgent.executeCommand(spokenText)) {
+                is AgentExecutionResult.Immediate -> {
+                    _lastAssistantResponse.value = result.feedback
+                    logWakeEvent(configuredWakeWord, true, spokenText, result.feedback, "COMPLETED")
+                    speakResponse(result.feedback)
+                    return@launch
+                }
+                is AgentExecutionResult.StagedForApproval -> {
+                    _lastAssistantResponse.value = result.message
+                    logWakeEvent(configuredWakeWord, true, spokenText, result.message, "STAGED")
+                    speakResponse(result.message)
+                    return@launch
+                }
+                is AgentExecutionResult.Handled -> {
+                    _lastAssistantResponse.value = result.feedback
+                    logWakeEvent(configuredWakeWord, true, spokenText, result.feedback, "COMPLETED")
+                    speakResponse(result.feedback)
+                    return@launch
+                }
+                is AgentExecutionResult.Unhandled -> {
+                    // Fall through to deterministic ActionExecutor & RAG
+                }
+            }
+
+            // 2. Evaluate native Android Actions (Apps, Settings, Alarms, Timers)
             val actionStart = SystemClock.elapsedRealtime()
             val parsedAction = actionExecutor.parseAction(spokenText)
             if (parsedAction !is AssistantAction.None) {
@@ -639,7 +666,7 @@ class JarvisVoiceStateMachine(
             transitionTo(JarvisAudioState.PROCESSING)
 
             // 1. Route through Master Jarvis Agent (WhatsApp, SMS, Phone, Calendar, Device)
-            val masterAgent = MasterJarvisAgent(context)
+            val masterAgent = MasterJarvisAgent.getInstance(context)
             when (val result = masterAgent.executeCommand(command)) {
                 is AgentExecutionResult.Immediate -> {
                     _lastAssistantResponse.value = result.feedback

@@ -71,10 +71,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
-import androidx.compose.material3.TabRowDefaults
-import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -166,7 +162,6 @@ fun HomeScreen(
     val isTtsSpeaking by JarvisTtsEngine.getInstance(context).isSpeaking.collectAsStateWithLifecycle()
     var showEnrollmentDialog by remember { mutableStateOf(false) }
 
-    var selectedTab by remember { mutableIntStateOf(0) } // 0: Live Voice Matrix, 1: High-Fi Audio WAV
     var googleVoiceLang by remember { mutableStateOf("hi-en") } // Default to Hinglish
     var customTitle by remember { mutableStateOf("") }
     var globalCommandInput by remember { mutableStateOf("") }
@@ -216,10 +211,10 @@ fun HomeScreen(
     val greeting = remember {
         val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
         when (hour) {
-            in 5..11 -> "GOOD MORNING, COMMANDER"
-            in 12..16 -> "GOOD AFTERNOON, COMMANDER"
-            in 17..21 -> "GOOD EVENING, COMMANDER"
-            else -> "SYSTEMS ONLINE, COMMANDER"
+            in 5..11 -> "GOOD MORNING, SIR"
+            in 12..16 -> "GOOD AFTERNOON, SIR"
+            in 17..21 -> "GOOD EVENING, SIR"
+            else -> "SYSTEMS ONLINE, SIR"
         }
     }
 
@@ -254,7 +249,7 @@ fun HomeScreen(
                 topBar = {
                     JarvisTopAppBar(
                         title = "J.A.R.V.I.S.",
-                        subtitle = "LOCAL QUANTUM CORE // ₹0 PRIVACY GUARANTEE",
+                        subtitle = "EXECUTIVE PERSONAL AI // 100% ON-DEVICE",
                         onNavigateToSettings = onNavigateToSettings,
                         onNavigateToPermissions = onNavigateToPermissions,
                         onToggleSidebar = if (isWideScreen) { { isSidebarExpanded = !isSidebarExpanded } } else null,
@@ -556,47 +551,7 @@ fun HomeScreen(
                                     .animateContentSize(),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                // Mode Selector: Live Voice Matrix vs Offline PCM WAV
-                                TabRow(
-                                    selectedTabIndex = selectedTab,
-                                    containerColor = JarvisSpaceBlack,
-                                    contentColor = JarvisCyanElectric,
-                                    indicator = { tabPositions ->
-                                        TabRowDefaults.SecondaryIndicator(
-                                            modifier = Modifier.tabIndicatorOffset(tabPositions[selectedTab]),
-                                            color = JarvisCyanElectric,
-                                            height = 2.dp
-                                        )
-                                    },
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .border(1.dp, JarvisGlassBorder, RoundedCornerShape(10.dp))
-                                ) {
-                                    Tab(
-                                        selected = selectedTab == 0,
-                                        onClick = { selectedTab = 0 },
-                                        text = {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Icon(Icons.Default.RecordVoiceOver, contentDescription = null, modifier = Modifier.size(16.dp))
-                                                Spacer(modifier = Modifier.width(6.dp))
-                                                Text("Live Voice Matrix", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                                            }
-                                        }
-                                    )
-                                    Tab(
-                                        selected = selectedTab == 1,
-                                        onClick = { selectedTab = 1 },
-                                        text = {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Icon(Icons.Default.Mic, contentDescription = null, modifier = Modifier.size(16.dp))
-                                                Spacer(modifier = Modifier.width(6.dp))
-                                                Text("Offline PCM WAV", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                                            }
-                                        }
-                                    )
-                                }
 
-                                Spacer(modifier = Modifier.height(20.dp))
 
                                 // The Central JARVIS Interactive Voice Orb
                                 JarvisOrb(
@@ -611,22 +566,10 @@ fun HomeScreen(
                                             }
                                             permissionLauncher.launch(perms.toTypedArray())
                                         } else {
-                                            if (selectedTab == 0) {
-                                                if (isGoogleVoiceListening) {
-                                                    viewModel.stopGoogleVoiceListening()
-                                                } else {
-                                                    viewModel.startGoogleVoiceListening(googleVoiceLang)
-                                                }
+                                            if (isGoogleVoiceListening) {
+                                                viewModel.stopGoogleVoiceListening()
                                             } else {
-                                                when (recordingState) {
-                                                    is RecordingState.Recording -> viewModel.stopRecording(context)
-                                                    is RecordingState.Paused -> viewModel.resumeRecording(context)
-                                                    else -> {
-                                                        val title = customTitle.ifBlank { null }
-                                                        viewModel.startRecording(context, title)
-                                                        customTitle = ""
-                                                    }
-                                                }
+                                                viewModel.startGoogleVoiceListening(googleVoiceLang)
                                             }
                                         }
                                     }
@@ -637,7 +580,7 @@ fun HomeScreen(
                                 // Orb Subtitle & State indicator
                                 val orbStatusText = when (orbState) {
                                     JarvisOrbState.LISTENING -> "LIVE AUDIO CAPTURE ACTIVE // SPEAK NOW"
-                                    JarvisOrbState.PROCESSING -> "QUANTUM SYNTHESIS IN PROGRESS..."
+                                    JarvisOrbState.PROCESSING -> "PROCESSING QUERY..."
                                     JarvisOrbState.ERROR -> "AUDIO BUS ANOMALY DETECTED"
                                     JarvisOrbState.SPEAKING -> "TRANSMITTING RESPONSE"
                                     JarvisOrbState.IDLE -> "JARVIS CORE STANDBY // TAP ORB TO ENGAGE"
@@ -656,9 +599,6 @@ fun HomeScreen(
                                 )
 
                                 Spacer(modifier = Modifier.height(12.dp))
-
-                                // MODE 0: Live Voice Matrix Controls
-                                if (selectedTab == 0) {
                                     if (!isGoogleVoiceListening) {
                                         // Language Code-Switching Selector (Hinglish fidelity)
                                         Text(
@@ -865,95 +805,6 @@ fun HomeScreen(
                                             }
                                         }
                                     }
-                                } else {
-                                    // MODE 1: Offline PCM WAV Recording controls
-                                    when (val state = recordingState) {
-                                        is RecordingState.Idle, is RecordingState.Completed, is RecordingState.Error -> {
-                                            Row(
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                FilterChip(
-                                                    selected = activeModelId.contains("hi"),
-                                                    onClick = { viewModel.setActiveModel("vosk-model-small-hi-0.22") },
-                                                    label = { Text("🇮🇳 Hindi", fontSize = 11.sp) }
-                                                )
-                                                FilterChip(
-                                                    selected = activeModelId.contains("en-in"),
-                                                    onClick = { viewModel.setActiveModel("vosk-model-small-en-in-0.4") },
-                                                    label = { Text("🌐 Indian English", fontSize = 11.sp) }
-                                                )
-                                                FilterChip(
-                                                    selected = activeModelId.contains("en-us"),
-                                                    onClick = { viewModel.setActiveModel("vosk-model-small-en-us-0.15") },
-                                                    label = { Text("US", fontSize = 11.sp) }
-                                                )
-                                            }
-                                        }
-
-                                        is RecordingState.Recording -> {
-                                            Text(
-                                                text = formatMs(state.durationMs),
-                                                fontSize = 42.sp,
-                                                fontFamily = FontFamily.Monospace,
-                                                fontWeight = FontWeight.Bold,
-                                                color = JarvisCyanElectric
-                                            )
-                                            Spacer(modifier = Modifier.height(12.dp))
-                                            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                                                OutlinedButton(
-                                                    onClick = { viewModel.pauseRecording(context) },
-                                                    border = androidx.compose.foundation.BorderStroke(1.dp, JarvisGlassBorder)
-                                                ) {
-                                                    Icon(Icons.Default.Pause, contentDescription = "Pause", tint = JarvisIceBlue)
-                                                    Spacer(modifier = Modifier.width(4.dp))
-                                                    Text("Pause", color = JarvisIceBlue)
-                                                }
-                                                Button(
-                                                    onClick = { viewModel.stopRecording(context) },
-                                                    colors = ButtonDefaults.buttonColors(containerColor = JarvisStatusError)
-                                                ) {
-                                                    Icon(Icons.Default.Stop, contentDescription = "Stop", tint = Color.White)
-                                                    Spacer(modifier = Modifier.width(4.dp))
-                                                    Text("Finalize", color = Color.White, fontWeight = FontWeight.Bold)
-                                                }
-                                            }
-                                        }
-
-                                        is RecordingState.Paused -> {
-                                            Text(
-                                                text = formatMs(state.durationMs),
-                                                fontSize = 42.sp,
-                                                fontFamily = FontFamily.Monospace,
-                                                fontWeight = FontWeight.Bold,
-                                                color = JarvisStatusWarning
-                                            )
-                                            Spacer(modifier = Modifier.height(12.dp))
-                                            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                                                Button(
-                                                    onClick = { viewModel.resumeRecording(context) },
-                                                    colors = ButtonDefaults.buttonColors(containerColor = JarvisCyanElectric)
-                                                ) {
-                                                    Icon(Icons.Default.PlayArrow, contentDescription = "Resume", tint = JarvisSpaceBlack)
-                                                    Spacer(modifier = Modifier.width(4.dp))
-                                                    Text("Resume", color = JarvisSpaceBlack)
-                                                }
-                                                OutlinedButton(
-                                                    onClick = { viewModel.stopRecording(context) },
-                                                    border = androidx.compose.foundation.BorderStroke(1.dp, JarvisGlassBorder)
-                                                ) {
-                                                    Icon(Icons.Default.Stop, contentDescription = "Stop", tint = JarvisStatusError)
-                                                    Spacer(modifier = Modifier.width(4.dp))
-                                                    Text("Stop", color = JarvisStatusError)
-                                                }
-                                            }
-                                        }
-
-                                        is RecordingState.Finalizing -> {
-                                            Text("Encoding Linear PCM WAV to Sandboxed Storage...", color = JarvisCyanElectric, fontSize = 12.sp)
-                                        }
-                                    }
-                                }
                             }
                         }
                     }

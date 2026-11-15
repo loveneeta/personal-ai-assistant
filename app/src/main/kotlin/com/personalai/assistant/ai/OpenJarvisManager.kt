@@ -133,7 +133,8 @@ object OpenJarvisManager {
     suspend fun query(
         context: Context,
         userPrompt: String,
-        groundingContext: String = ""
+        groundingContext: String = "",
+        conversationHistory: List<Pair<String, String>> = emptyList()
     ): Result<String> = withContext(Dispatchers.IO) {
         if (!isEnabled(context)) {
             return@withContext Result.failure(IllegalStateException("OpenJarvis is disabled (offline mode active)."))
@@ -167,6 +168,15 @@ object OpenJarvisManager {
                 }
             }
             messages.put(JSONObject().put("role", "system").put("content", systemInstruction))
+
+            // Inject previous dialogue turns for conversational context retention
+            for ((role, content) in conversationHistory) {
+                if (content.isNotBlank()) {
+                    messages.put(JSONObject().put("role", role).put("content", content))
+                }
+            }
+
+            // Current user turn
             messages.put(JSONObject().put("role", "user").put("content", userPrompt))
 
             val payload = JSONObject().apply {
