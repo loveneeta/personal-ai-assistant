@@ -18,6 +18,7 @@ import com.personalai.assistant.ai.ChatMessage
 import com.personalai.assistant.ai.LocalRagChatEngine
 import com.personalai.assistant.data.local.entity.WakeEventEntity
 import com.personalai.assistant.data.repository.AppRepository
+import com.personalai.assistant.playback.JarvisTtsEngine
 import com.personalai.assistant.recording.AudioCaptureHelper
 import com.personalai.assistant.transcription.AsrEngine
 import com.personalai.assistant.transcription.MultilingualOfflineAsrEngine
@@ -656,12 +657,17 @@ class JarvisVoiceStateMachine(
         val utteranceId = "JARVIS_RESPONSE_$sessionId"
         transitionTo(JarvisAudioState.SPEAKING)
         isTtsSpeaking.set(true)
-        val cleanSpeech = text.replace(Regex("[#*`_]"), "").take(400)
-        textToSpeech?.speak(cleanSpeech, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+        JarvisTtsEngine.getInstance(context).speak(text) {
+            isTtsSpeaking.set(false)
+            handleTtsCompletion(utteranceId)
+        }
     }
 
     private fun stopTts() {
         isTtsSpeaking.set(false)
+        try {
+            JarvisTtsEngine.getInstance(context).stop()
+        } catch (_: Exception) {}
         try {
             textToSpeech?.stop()
         } catch (e: Exception) {

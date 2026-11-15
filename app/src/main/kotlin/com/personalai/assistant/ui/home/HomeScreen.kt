@@ -37,6 +37,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.GraphicEq
@@ -50,6 +51,8 @@ import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.VolumeOff
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -95,6 +98,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.personalai.assistant.data.local.entity.RecordingEntity
+import com.personalai.assistant.playback.JarvisTtsEngine
 import com.personalai.assistant.recording.RecordingState
 import com.personalai.assistant.ui.components.JarvisBottomNavigationBar
 import com.personalai.assistant.ui.components.JarvisGlassCard
@@ -157,6 +161,8 @@ fun HomeScreen(
     val alwaysOnState by viewModel.alwaysOnState.collectAsStateWithLifecycle()
     val alwaysOnSoundLevel by viewModel.alwaysOnSoundLevel.collectAsStateWithLifecycle()
     val isWakeModelReady by viewModel.isWakeModelReady.collectAsStateWithLifecycle()
+    val lastAssistantResponse by viewModel.lastAssistantResponse.collectAsStateWithLifecycle()
+    val isTtsSpeaking by JarvisTtsEngine.getInstance(context).isSpeaking.collectAsStateWithLifecycle()
     var showEnrollmentDialog by remember { mutableStateOf(false) }
 
     var selectedTab by remember { mutableIntStateOf(0) } // 0: Live Voice Matrix, 1: High-Fi Audio WAV
@@ -199,7 +205,7 @@ fun HomeScreen(
     val orbState = when {
         alwaysOnState == JarvisAudioState.WAKE_DETECTED || alwaysOnState == JarvisAudioState.COMMAND_LISTENING || isGoogleVoiceListening || recordingState is RecordingState.Recording -> JarvisOrbState.LISTENING
         alwaysOnState == JarvisAudioState.PROCESSING || alwaysOnState == JarvisAudioState.VERIFYING_SPEAKER || recordingState is RecordingState.Finalizing -> JarvisOrbState.PROCESSING
-        alwaysOnState == JarvisAudioState.SPEAKING -> JarvisOrbState.SPEAKING
+        alwaysOnState == JarvisAudioState.SPEAKING || isTtsSpeaking -> JarvisOrbState.SPEAKING
         alwaysOnState == JarvisAudioState.ERROR || googleVoiceError != null || recordingState is RecordingState.Error -> JarvisOrbState.ERROR
         else -> JarvisOrbState.IDLE
     }
@@ -380,7 +386,9 @@ fun HomeScreen(
                                 IconButton(
                                     onClick = {
                                         if (globalCommandInput.isNotBlank()) {
-                                            onNavigateToChat()
+                                            val cmd = globalCommandInput
+                                            globalCommandInput = ""
+                                            viewModel.executeAssistantCommand(context, cmd)
                                         } else {
                                             onNavigateToChat()
                                         }
@@ -396,6 +404,63 @@ fun HomeScreen(
                                         tint = JarvisCyanElectric,
                                         modifier = Modifier.size(18.dp)
                                     )
+                                }
+                            }
+                        }
+                    }
+
+                    // 2b. Live AI Spoken Feedback Card (when command or voice query is executed)
+                    if (!lastAssistantResponse.isNullOrBlank()) {
+                        item {
+                            JarvisGlassCard(
+                                modifier = Modifier.fillMaxWidth(),
+                                glowAccent = true
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.RecordVoiceOver,
+                                        contentDescription = null,
+                                        tint = JarvisCyanElectric,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Text(
+                                        text = lastAssistantResponse ?: "",
+                                        color = JarvisTextPrimary,
+                                        fontSize = 13.sp,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    IconButton(
+                                        onClick = {
+                                            if (isTtsSpeaking) {
+                                                viewModel.stopSpeaking(context)
+                                            } else {
+                                                lastAssistantResponse?.let { viewModel.speakText(context, it) }
+                                            }
+                                        },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = if (isTtsSpeaking) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
+                                            contentDescription = "Toggle Speech",
+                                            tint = JarvisCyanElectric,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = { viewModel.clearLastAssistantResponse() },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "Dismiss",
+                                            tint = JarvisTextSecondary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -732,6 +797,20 @@ fun HomeScreen(
                                                                 fontSize = 12.sp,
                                                                 modifier = Modifier.weight(1f)
                                                             )
+                                                            // Execute recognized speech as AI command
+                                                            IconButton(
+                                                                onClick = {
+                                                                    viewModel.executeAssistantCommand(context, sentence)
+                                                                },
+                                                                modifier = Modifier.size(24.dp)
+                                                            ) {
+                                                                Icon(
+                                                                    Icons.Default.PlayArrow,
+                                                                    contentDescription = "Execute as command",
+                                                                    tint = JarvisCyanElectric,
+                                                                    modifier = Modifier.size(14.dp)
+                                                                )
+                                                            }
                                                             // Quick edit icon to correct transcription errors faithfully
                                                             IconButton(
                                                                 onClick = {

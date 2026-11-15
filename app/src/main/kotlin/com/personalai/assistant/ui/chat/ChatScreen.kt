@@ -28,6 +28,8 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ClearAll
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.VolumeOff
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -170,6 +172,14 @@ fun ChatScreen(
                     }
                 },
                 actions = {
+                    val isVoiceOutputEnabled by viewModel.isVoiceOutputEnabled.collectAsStateWithLifecycle()
+                    IconButton(onClick = { viewModel.toggleVoiceOutput() }) {
+                        Icon(
+                            imageVector = if (isVoiceOutputEnabled) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
+                            contentDescription = if (isVoiceOutputEnabled) "Mute Voice Output" else "Enable Voice Output",
+                            tint = if (isVoiceOutputEnabled) JarvisCyan else JarvisTextMuted
+                        )
+                    }
                     IconButton(onClick = { viewModel.clearHistory() }) {
                         Icon(
                             Icons.Default.ClearAll,
@@ -256,7 +266,8 @@ fun ChatScreen(
                                 "RECORDING" -> onNavigateToRecording(citation.referenceId)
                                 "MEETING" -> onNavigateToMeeting(citation.referenceId)
                             }
-                        }
+                        },
+                        onSpeakClick = { text -> viewModel.speakMessage(text) }
                     )
                 }
 
@@ -386,7 +397,8 @@ fun ChatScreen(
 @Composable
 fun ChatBubble(
     message: ChatMessage,
-    onCitationClick: (Citation) -> Unit
+    onCitationClick: (Citation) -> Unit,
+    onSpeakClick: ((String) -> Unit)? = null
 ) {
     val isUser = message.isUser
     val alignment = if (isUser) Alignment.End else Alignment.Start
@@ -432,23 +444,42 @@ fun ChatBubble(
                 borderColor = JarvisBorderCyan.copy(alpha = 0.7f)
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(8.dp)
-                                .clip(CircleShape)
-                                .background(JarvisCyan)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "J.A.R.V.I.S. INTELLIGENCE",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = JarvisIceBlue,
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 10.sp,
-                            letterSpacing = 1.2.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(JarvisCyan)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "J.A.R.V.I.S. INTELLIGENCE",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = JarvisIceBlue,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.sp,
+                                letterSpacing = 1.2.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        if (onSpeakClick != null) {
+                            IconButton(
+                                onClick = { onSpeakClick(message.content) },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.VolumeUp,
+                                    contentDescription = "Read aloud",
+                                    tint = JarvisCyan,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(

@@ -3,9 +3,13 @@ package com.personalai.assistant.ui.home
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.personalai.assistant.actions.AndroidActionExecutor
+import com.personalai.assistant.actions.AssistantAction
+import com.personalai.assistant.ai.LocalRagChatEngine
 import com.personalai.assistant.data.local.entity.RecordingEntity
 import com.personalai.assistant.data.local.entity.WakeEventEntity
 import com.personalai.assistant.data.repository.AppRepository
+import com.personalai.assistant.playback.JarvisTtsEngine
 import com.personalai.assistant.recording.AudioRecordingService
 import com.personalai.assistant.recording.RecordingState
 import com.personalai.assistant.transcription.GoogleVoiceRecognitionManager
@@ -14,8 +18,10 @@ import com.personalai.assistant.transcription.models.ModelManager
 import com.personalai.assistant.wakeword.JarvisAlwaysOnService
 import com.personalai.assistant.wakeword.JarvisAudioState
 import com.personalai.assistant.wakeword.SpeakerProfileManager
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -61,6 +67,12 @@ class HomeViewModel(
     val alwaysOnState: StateFlow<JarvisAudioState> = JarvisAlwaysOnService.serviceState
     val alwaysOnSoundLevel: StateFlow<Float> = JarvisAlwaysOnService.soundLevel
     val isWakeModelReady: StateFlow<Boolean> = JarvisAlwaysOnService.isWakeModelReady
+
+    // AI Action & RAG Command Execution
+    private val ragEngine = LocalRagChatEngine(repository)
+
+    private val _lastAssistantResponse = MutableStateFlow<String?>(null)
+    val lastAssistantResponse: StateFlow<String?> = _lastAssistantResponse.asStateFlow()
 
     init {
         // Automatically reconcile incomplete recordings from crashes on launch
@@ -168,5 +180,45 @@ class HomeViewModel(
         viewModelScope.launch {
             repository.reconcileIncompleteRecordings()
         }
+    }
+
+    /**
+     * Executes an AI command or natural language query and speaks the result aloud.
+     */
+    fun executeAssistantCommand(context: Context, command: String) {
+        val trimmed = command.trim()
+        if (trimmed.isBlank()) return
+
+        viewModelScope.launch {
+            try {
+                val actionExecutor = AndroidActionExecutor(context)
+                val parsedAction = actionExecutor.parseAction(trimmed)
+                val feedback = if (parsedAction !is AssistantAction.None) {
+                    val result = actionExecutor.execute(parsedAction)
+                    result.spokenFeedback
+                } else {
+                    val chatResponse = ragEngine.answerQuery(trimmed)
+                    chatResponse.content
+                }
+                _lastAssistantResponse.value = feedback
+                JarvisTtsEngine.getInstance(context).speak(feedback)
+            } catch (e: Exception) {
+                val errFeedback = "An error occurred while processing: ${e.message}"
+                _lastAssistantResponse.value = errFeedback
+                JarvisTtsEngine.getInstance(context).speak(errFeedback)
+            }
+        }
+    }
+
+    fun speakText(context: Context, text: String) {
+        JarvisTtsEngine.getInstance(context).speak(text)
+    }
+
+    fun stopSpeaking(context: Context) {
+        JarvisTtsEngine.getInstance(context).stop()
+    }
+
+    fun clearLastAssistantResponse() {
+        _lastAssistantResponse.value = null
     }
 }

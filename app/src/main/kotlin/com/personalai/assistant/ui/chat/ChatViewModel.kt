@@ -7,6 +7,7 @@ import com.personalai.assistant.ai.ChatMessage
 import com.personalai.assistant.ai.LocalRagChatEngine
 import com.personalai.assistant.ai.OpenJarvisManager
 import com.personalai.assistant.data.repository.AppRepository
+import com.personalai.assistant.playback.JarvisTtsEngine
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -44,6 +45,28 @@ class ChatViewModel(
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
+    private val _isVoiceOutputEnabled = MutableStateFlow(true)
+    val isVoiceOutputEnabled: StateFlow<Boolean> = _isVoiceOutputEnabled.asStateFlow()
+
+    fun toggleVoiceOutput() {
+        _isVoiceOutputEnabled.value = !_isVoiceOutputEnabled.value
+        if (!_isVoiceOutputEnabled.value && context != null) {
+            JarvisTtsEngine.getInstance(context).stop()
+        }
+    }
+
+    fun speakMessage(text: String) {
+        if (context != null) {
+            JarvisTtsEngine.getInstance(context).speak(text)
+        }
+    }
+
+    fun stopSpeech() {
+        if (context != null) {
+            JarvisTtsEngine.getInstance(context).stop()
+        }
+    }
+
     fun refreshOpenJarvisState() {
         context?.let {
             _isOpenJarvisActive.value = OpenJarvisManager.isEnabled(it)
@@ -61,31 +84,44 @@ class ChatViewModel(
         viewModelScope.launch {
             try {
                 val openJarvisEnabled = context != null && OpenJarvisManager.isEnabled(context)
+                val replyContent: String
                 if (openJarvisEnabled) {
                     val localContext = buildGroundingContext(trimmed)
-                    val result = OpenJarvisManager.query(context!!, trimmed, localContext)
+                    val result = OpenJarvisManager.query(context, trimmed, localContext)
                     if (result.isSuccess) {
+                        replyContent = result.getOrThrow()
                         _messages.value = _messages.value + ChatMessage(
                             isUser = false,
-                            content = result.getOrThrow()
+                            content = replyContent
                         )
                     } else {
                         // Fall back to local RAG if OpenJarvis is offline/unreachable
                         val offlineFallback = chatEngine.answerQuery(trimmed)
                         val note = "*(OpenJarvis offline: ${result.exceptionOrNull()?.message ?: "unreachable"}, switched to on-device RAG)*\n\n"
+                        replyContent = note + offlineFallback.content
                         _messages.value = _messages.value + offlineFallback.copy(
-                            content = note + offlineFallback.content
+                            content = replyContent
                         )
                     }
                 } else {
                     val assistantMsg = chatEngine.answerQuery(trimmed)
+                    replyContent = assistantMsg.content
                     _messages.value = _messages.value + assistantMsg
                 }
+
+                // Vocalize AI response via on-device TTS
+                if (_isVoiceOutputEnabled.value && context != null) {
+                    JarvisTtsEngine.getInstance(context).speak(replyContent)
+                }
             } catch (e: Exception) {
+                val err = "Sorry, an error occurred while processing your request: ${e.message}"
                 _messages.value = _messages.value + ChatMessage(
                     isUser = false,
-                    content = "Sorry, an error occurred while processing your request: ${e.message}"
+                    content = err
                 )
+                if (_isVoiceOutputEnabled.value && context != null) {
+                    JarvisTtsEngine.getInstance(context).speak(err)
+                }
             } finally {
                 _isLoading.value = false
             }
