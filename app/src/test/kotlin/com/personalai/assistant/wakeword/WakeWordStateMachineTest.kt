@@ -6,6 +6,7 @@ import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import com.personalai.assistant.data.local.entity.WakeEventEntity
 import com.personalai.assistant.data.repository.AppRepository
+import com.personalai.assistant.recording.AudioCaptureHelper
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -425,5 +426,49 @@ class WakeWordStateMachineTest {
 
         speakerManager.deleteProfile()
         assertTrue(speakerManager.enrollmentState.value is EnrollmentState.Unenrolled)
+    }
+
+    @Test
+    fun testMicrophonePreemption_higherPriorityOwnerPreemptsStateMachineSafely() = runBlocking {
+        stateMachine.startHandsFree()
+        assertEquals(JarvisAudioState.WAKE_LISTENING, stateMachine.currentState.value)
+        assertTrue(stateMachine.isCapturing())
+        assertEquals(AudioOwner.ALWAYS_ON_LISTENER, JarvisVoiceCoordinator.currentOwner.value)
+
+        // 1. Enrollment session requests mic (priority 30 > 10)
+        val preemptSuccess = JarvisVoiceCoordinator.requestMicrophone(AudioOwner.ENROLLMENT)
+        assertTrue(preemptSuccess)
+        assertEquals(AudioOwner.ENROLLMENT, JarvisVoiceCoordinator.currentOwner.value)
+
+        // State machine must yield hardware mic immediately
+        assertFalse("Preempted state machine must not capture audio", stateMachine.isCapturing())
+        assertEquals(JarvisAudioState.PAUSED, stateMachine.currentState.value)
+
+        // 2. Enrollment session finishes and releases mic
+        JarvisVoiceCoordinator.releaseMicrophone(AudioOwner.ENROLLMENT)
+        assertEquals(AudioOwner.ALWAYS_ON_LISTENER, JarvisVoiceCoordinator.currentOwner.value)
+
+        // Give background coroutine brief moment to resume
+        Thread.sleep(400)
+        assertTrue("State machine must resume capture after preemption", stateMachine.isCapturing())
+        assertEquals(JarvisAudioState.WAKE_LISTENING, stateMachine.currentState.value)
+    }
+
+    @Test
+    fun testAudioCaptureHelper_omniRecordCreation() {
+        val minBuf = android.media.AudioRecord.getMinBufferSize(
+            16000,
+            android.media.AudioFormat.CHANNEL_IN_MONO,
+            android.media.AudioFormat.ENCODING_PCM_16BIT
+        )
+        val record = AudioCaptureHelper.createOmniAudioRecord(
+            sampleRate = 16000,
+            channelConfig = android.media.AudioFormat.CHANNEL_IN_MONO,
+            audioFormat = android.media.AudioFormat.ENCODING_PCM_16BIT,
+            bufferSize = Math.max(minBuf * 2, 4096)
+        )
+        assertNotNull("Omni AudioRecord must be created", record)
+        assertEquals(android.media.AudioRecord.STATE_INITIALIZED, record?.state)
+        record?.release()
     }
 }

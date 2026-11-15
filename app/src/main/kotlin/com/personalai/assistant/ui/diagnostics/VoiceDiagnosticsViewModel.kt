@@ -11,6 +11,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.personalai.assistant.playback.AudioPlayer
+import com.personalai.assistant.recording.AudioCaptureHelper
 import com.personalai.assistant.recording.WavWriter
 import com.personalai.assistant.transcription.SentenceReconstructor
 import com.personalai.assistant.transcription.VoskTranscriptionEngine
@@ -176,15 +177,14 @@ class VoiceDiagnosticsViewModel(
             val maxSamples = sampleRate * targetDurationSec
 
             try {
-                testAudioRecord = AudioRecord(
-                    MediaRecorder.AudioSource.MIC,
-                    sampleRate,
-                    AudioFormat.CHANNEL_IN_MONO,
-                    AudioFormat.ENCODING_PCM_16BIT,
-                    bufSize
+                testAudioRecord = AudioCaptureHelper.createOmniAudioRecord(
+                    sampleRate = sampleRate,
+                    channelConfig = AudioFormat.CHANNEL_IN_MONO,
+                    audioFormat = AudioFormat.ENCODING_PCM_16BIT,
+                    bufferSize = bufSize
                 )
 
-                if (testAudioRecord?.state != AudioRecord.STATE_INITIALIZED) {
+                if (testAudioRecord == null || testAudioRecord?.state != AudioRecord.STATE_INITIALIZED) {
                     withContext(Dispatchers.Main) {
                         _statusMessage.value = "Microphone hardware initialization failed."
                     }
@@ -375,13 +375,16 @@ class VoiceDiagnosticsViewModel(
             val startTime = SystemClock.elapsedRealtime()
 
             try {
-                audioRecord = AudioRecord(
-                    MediaRecorder.AudioSource.MIC,
-                    16000,
-                    AudioFormat.CHANNEL_IN_MONO,
-                    AudioFormat.ENCODING_PCM_16BIT,
-                    Math.max(minBuf * 2, 4096)
+                audioRecord = AudioCaptureHelper.createOmniAudioRecord(
+                    sampleRate = 16000,
+                    channelConfig = AudioFormat.CHANNEL_IN_MONO,
+                    audioFormat = AudioFormat.ENCODING_PCM_16BIT,
+                    bufferSize = Math.max(minBuf * 2, 4096)
                 )
+                if (audioRecord == null || audioRecord.state != AudioRecord.STATE_INITIALIZED) {
+                    _statusMessage.value = "Microphone hardware initialization failed"
+                    return@launch
+                }
                 audioRecord.startRecording()
                 val buffer = ShortArray(1024)
 

@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Security
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -32,6 +33,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -65,13 +67,21 @@ fun JarvisVoiceEnrollmentDialog(
     isCurrentlyEnrolled: Boolean,
     isVerificationEnabled: Boolean,
     onDismissRequest: () -> Unit,
-    onEnrollSample: (passIndex: Int) -> Unit,
+    onStartEnrollment: () -> Unit,
+    onEnrollSample: (passIndex: Int, onComplete: (Boolean, String?) -> Unit) -> Unit,
     onFinalizeEnrollment: () -> Boolean,
     onToggleVerification: (Boolean) -> Unit,
     onDeleteProfile: () -> Unit
 ) {
     var currentStep by remember { mutableIntStateOf(if (isCurrentlyEnrolled) 0 else 1) } // 0: Manage, 1..3: Recording passes, 4: Complete
     var isCapturingPass by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(currentStep) {
+        if (currentStep == 1 && !isCurrentlyEnrolled) {
+            onStartEnrollment()
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onDismissRequest,
@@ -177,7 +187,11 @@ fun JarvisVoiceEnrollmentDialog(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Button(
-                            onClick = { currentStep = 1 },
+                            onClick = {
+                                onStartEnrollment()
+                                errorMessage = null
+                                currentStep = 1
+                            },
                             colors = ButtonDefaults.buttonColors(containerColor = JarvisSurfaceGlass, contentColor = JarvisCyan),
                             border = androidx.compose.foundation.BorderStroke(1.dp, JarvisBorderCyan),
                             modifier = Modifier.weight(1f)
@@ -188,6 +202,8 @@ fun JarvisVoiceEnrollmentDialog(
                         Button(
                             onClick = {
                                 onDeleteProfile()
+                                onStartEnrollment()
+                                errorMessage = null
                                 currentStep = 1
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = JarvisSurfaceGlass, contentColor = JarvisStatusError),
@@ -259,28 +275,96 @@ fun JarvisVoiceEnrollmentDialog(
                         }
                     }
 
+                    if (isCapturingPass) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = JarvisNeonViolet.copy(alpha = 0.2f),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, JarvisNeonViolet),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    color = JarvisNeonViolet,
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(
+                                    "RECORDING FROM ALL MICS (2.5s)... SPEAK NOW!",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = JarvisNeonViolet,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 10.sp
+                                )
+                            }
+                        }
+                    }
+
+                    if (errorMessage != null) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = JarvisStatusError.copy(alpha = 0.15f),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, JarvisStatusError.copy(alpha = 0.5f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = errorMessage ?: "",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = JarvisStatusError,
+                                modifier = Modifier.padding(10.dp)
+                            )
+                        }
+                    }
+
                     Button(
                         onClick = {
-                            onEnrollSample(currentStep)
-                            if (currentStep < 3) {
-                                currentStep++
-                            } else {
-                                val success = onFinalizeEnrollment()
-                                if (success) {
-                                    currentStep = 4
+                            if (!isCapturingPass) {
+                                isCapturingPass = true
+                                errorMessage = null
+                                onEnrollSample(currentStep) { success, msg ->
+                                    isCapturingPass = false
+                                    if (success) {
+                                        errorMessage = null
+                                        if (currentStep < 3) {
+                                            currentStep++
+                                        } else {
+                                            val finalized = onFinalizeEnrollment()
+                                            if (finalized) {
+                                                currentStep = 4
+                                            } else {
+                                                errorMessage = "Failed to finalize profile template. Please retrain."
+                                            }
+                                        }
+                                    } else {
+                                        errorMessage = msg ?: "Could not record voice sample. Please speak clearly into device."
+                                    }
                                 }
                             }
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = JarvisCyan, contentColor = JarvisCosmicBlack),
+                        enabled = !isCapturingPass,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isCapturingPass) JarvisSurfaceGlass else JarvisCyan,
+                            contentColor = if (isCapturingPass) JarvisTextMuted else JarvisCosmicBlack
+                        ),
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Icon(Icons.Default.Mic, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            if (currentStep < 3) "Capture Sample $currentStep" else "Finalize & Calibrate",
-                            fontWeight = FontWeight.Bold
-                        )
+                        if (isCapturingPass) {
+                            Text("Listening to microphones...", fontWeight = FontWeight.Bold)
+                        } else {
+                            Icon(Icons.Default.Mic, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                if (errorMessage != null) "Retry Sample $currentStep"
+                                else if (currentStep < 3) "Capture Sample $currentStep"
+                                else "Finalize & Calibrate",
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 } else if (currentStep == 4) {
                     // Completed!

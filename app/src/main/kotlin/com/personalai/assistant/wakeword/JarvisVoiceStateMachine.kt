@@ -18,6 +18,7 @@ import com.personalai.assistant.ai.ChatMessage
 import com.personalai.assistant.ai.LocalRagChatEngine
 import com.personalai.assistant.data.local.entity.WakeEventEntity
 import com.personalai.assistant.data.repository.AppRepository
+import com.personalai.assistant.recording.AudioCaptureHelper
 import com.personalai.assistant.transcription.AsrEngine
 import com.personalai.assistant.transcription.MultilingualOfflineAsrEngine
 import com.personalai.assistant.transcription.SentenceReconstructor
@@ -105,8 +106,35 @@ class JarvisVoiceStateMachine(
     private var textToSpeech: TextToSpeech? = null
     private val isTtsSpeaking = AtomicBoolean(false)
 
+    val isWakeModelReady: Boolean get() = wakeWordEngine.isReady
+    private val isPreempted = AtomicBoolean(false)
+
+    private val preemptionHandler = object : JarvisVoiceCoordinator.PreemptionHandler {
+        override fun onPreempted(byOwner: AudioOwner) {
+            Log.i(TAG, "JarvisVoiceStateMachine preempted by $byOwner. Yielding microphone hardware...")
+            isPreempted.set(true)
+            suspendAudioLoop()
+        }
+
+        override fun onRestored() {
+            Log.i(TAG, "JarvisVoiceStateMachine restored from preemption. Resuming microphone capture...")
+            isPreempted.set(false)
+            if (isDesiredListening.get()) {
+                scope.launch {
+                    delay(120) // Brief pause for hardware HAL to settle
+                    synchronized(this@JarvisVoiceStateMachine) {
+                        if (isDesiredListening.get() && !isPreempted.get()) {
+                            startAudioLoop()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     init {
         initTts()
+        JarvisVoiceCoordinator.registerPreemptionHandler(preemptionHandler)
     }
 
     private fun initTts() {
@@ -143,6 +171,8 @@ class JarvisVoiceStateMachine(
     fun startHandsFree(wakeWord: String = "Jarvis") {
         configuredWakeWord = wakeWord
         isDesiredListening.set(true)
+        isPreempted.set(false)
+        JarvisVoiceCoordinator.registerPreemptionHandler(preemptionHandler)
 
         if (_currentState.value == JarvisAudioState.WAKE_LISTENING && isAudioCapturing.get()) {
             Log.d(TAG, "Already active in WAKE_LISTENING")
@@ -164,6 +194,8 @@ class JarvisVoiceStateMachine(
     fun pauseHandsFree() {
         Log.i(TAG, "Pausing hands-free listening")
         isDesiredListening.set(false)
+        isPreempted.set(false)
+        JarvisVoiceCoordinator.unregisterPreemptionHandler(preemptionHandler)
         currentTtsSessionId.incrementAndGet()
         stopTts()
         stopAudioLoop()
@@ -178,6 +210,8 @@ class JarvisVoiceStateMachine(
             return
         }
         isDesiredListening.set(true)
+        isPreempted.set(false)
+        JarvisVoiceCoordinator.registerPreemptionHandler(preemptionHandler)
         startAudioLoop()
     }
 
@@ -185,6 +219,8 @@ class JarvisVoiceStateMachine(
     fun stopHandsFree() {
         Log.i(TAG, "Stopping hands-free listening")
         isDesiredListening.set(false)
+        isPreempted.set(false)
+        JarvisVoiceCoordinator.unregisterPreemptionHandler(preemptionHandler)
         currentTtsSessionId.incrementAndGet()
         stopTts()
         stopAudioLoop()
@@ -289,13 +325,19 @@ class JarvisVoiceStateMachine(
 
             val record: AudioRecord
             try {
-                record = AudioRecord(
-                    MediaRecorder.AudioSource.MIC,
-                    SAMPLE_RATE,
-                    CHANNEL_CONFIG,
-                    AUDIO_FORMAT,
-                    bufferSize
+                val omniRecord = AudioCaptureHelper.createOmniAudioRecord(
+                    sampleRate = SAMPLE_RATE,
+                    channelConfig = CHANNEL_CONFIG,
+                    audioFormat = AUDIO_FORMAT,
+                    bufferSize = bufferSize
                 )
+                if (omniRecord == null) {
+                    Log.e(TAG, "AudioCaptureHelper could not initialize any audio source.")
+                    JarvisVoiceCoordinator.releaseMicrophone(AudioOwner.ALWAYS_ON_LISTENER)
+                    transitionTo(JarvisAudioState.ERROR)
+                    return
+                }
+                record = omniRecord
             } catch (e: SecurityException) {
                 Log.e(TAG, "SecurityException creating AudioRecord: ${e.message}")
                 JarvisVoiceCoordinator.releaseMicrophone(AudioOwner.ALWAYS_ON_LISTENER)
@@ -461,8 +503,8 @@ class JarvisVoiceStateMachine(
                     }
                     if (audioRecord == record) {
                         audioRecord = null
+                        isAudioCapturing.set(false)
                     }
-                    isAudioCapturing.set(false)
                 }
             }
         }
@@ -624,6 +666,39 @@ class JarvisVoiceStateMachine(
             textToSpeech?.stop()
         } catch (e: Exception) {
             // ignore
+        }
+    }
+
+    private fun suspendAudioLoop() {
+        synchronized(captureLock) {
+            if (!isAudioCapturing.get() && audioRecord == null) return
+            Log.i(TAG, "Suspending AudioRecord hardware capture to yield to higher priority session")
+            isAudioCapturing.set(false)
+            commandTimeoutJob?.cancel()
+            commandTimeoutJob = null
+
+            val record = audioRecord
+            audioRecord = null
+
+            if (record != null) {
+                try {
+                    if (record.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                        record.stop()
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error stopping preempted AudioRecord: ${e.message}")
+                }
+                try {
+                    record.release()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error releasing preempted AudioRecord: ${e.message}")
+                }
+            }
+
+            loopJob?.cancel()
+            loopJob = null
+            _soundLevel.value = 0f
+            transitionTo(JarvisAudioState.PAUSED)
         }
     }
 

@@ -5,6 +5,7 @@ import android.util.Log
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import com.personalai.assistant.recording.AudioCaptureHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -320,16 +321,15 @@ class SpeakerProfileManager(private val context: Context) {
         var audioRecord: AudioRecord? = null
 
         try {
-            audioRecord = AudioRecord(
-                MediaRecorder.AudioSource.MIC,
-                sampleRate,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-                Math.max(minBuf * 2, 4096)
+            audioRecord = AudioCaptureHelper.createOmniAudioRecord(
+                sampleRate = sampleRate,
+                channelConfig = AudioFormat.CHANNEL_IN_MONO,
+                audioFormat = AudioFormat.ENCODING_PCM_16BIT,
+                bufferSize = Math.max(minBuf * 2, 4096)
             )
 
-            if (audioRecord.state != AudioRecord.STATE_INITIALIZED) {
-                val err = "Failed to initialize microphone hardware"
+            if (audioRecord == null || audioRecord.state != AudioRecord.STATE_INITIALIZED) {
+                val err = "Failed to initialize multi-microphone hardware"
                 _enrollmentState.value = EnrollmentState.Error(err)
                 return@withContext Result.failure(IllegalStateException(err))
             }
@@ -357,8 +357,9 @@ class SpeakerProfileManager(private val context: Context) {
                 if (abs(accumulator[i].toInt()) >= 32000) clipCount++
             }
             val rms = sqrt(sumSq / samplesRead)
-            if (rms < 250.0) {
-                val err = "Voice too quiet. Please speak closer to microphone."
+            Log.i(TAG, "Biometric enrollment sample recorded $samplesRead samples with RMS=$rms")
+            if (rms < 120.0) {
+                val err = "Voice too quiet (RMS: ${rms.toInt()}). Please speak clearly into the device."
                 _enrollmentState.value = EnrollmentState.Error(err)
                 return@withContext Result.failure(IllegalArgumentException(err))
             }

@@ -218,15 +218,14 @@ class AudioRecordingService : Service() {
         val bufferSize = (minBufferSize * 2).coerceAtLeast(4096)
 
         try {
-            audioRecord = AudioRecord(
-                MediaRecorder.AudioSource.MIC,
-                WavWriter.SAMPLE_RATE,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-                bufferSize
+            audioRecord = AudioCaptureHelper.createOmniAudioRecord(
+                sampleRate = WavWriter.SAMPLE_RATE,
+                channelConfig = AudioFormat.CHANNEL_IN_MONO,
+                audioFormat = AudioFormat.ENCODING_PCM_16BIT,
+                bufferSize = bufferSize
             )
 
-            if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
+            if (audioRecord == null || audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
                 Log.e(TAG, "AudioRecord initialization failed (state != STATE_INITIALIZED).")
                 _recordingState.value = RecordingState.Error("Microphone initialization failed. Check permissions.")
                 RecordingHealthMonitor.setMicState("ERROR", "AudioRecord initialization failed")
@@ -406,14 +405,13 @@ class AudioRecordingService : Service() {
                 try { stop() } catch (e: Exception) {}
                 try { release() } catch (e: Exception) {}
             }
-            audioRecord = AudioRecord(
-                MediaRecorder.AudioSource.MIC,
-                WavWriter.SAMPLE_RATE,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-                bufferSize
+            audioRecord = AudioCaptureHelper.createOmniAudioRecord(
+                sampleRate = WavWriter.SAMPLE_RATE,
+                channelConfig = AudioFormat.CHANNEL_IN_MONO,
+                audioFormat = AudioFormat.ENCODING_PCM_16BIT,
+                bufferSize = bufferSize
             )
-            if (audioRecord?.state == AudioRecord.STATE_INITIALIZED) {
+            if (audioRecord != null && audioRecord?.state == AudioRecord.STATE_INITIALIZED) {
                 audioRecord?.startRecording()
                 return true
             }

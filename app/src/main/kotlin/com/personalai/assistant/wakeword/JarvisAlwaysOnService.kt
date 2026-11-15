@@ -47,6 +47,9 @@ class JarvisAlwaysOnService : Service() {
         private val _soundLevel = MutableStateFlow(0f)
         val soundLevel: StateFlow<Float> = _soundLevel.asStateFlow()
 
+        private val _isWakeModelReady = MutableStateFlow(false)
+        val isWakeModelReady: StateFlow<Boolean> = _isWakeModelReady.asStateFlow()
+
         fun isAlwaysReadyPersisted(context: Context): Boolean {
             return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .getBoolean(KEY_ALWAYS_READY, false)
@@ -141,6 +144,7 @@ class JarvisAlwaysOnService : Service() {
                 }
                 startForegroundWithNotification()
                 stateMachine.startHandsFree()
+                _isWakeModelReady.value = stateMachine.isWakeModelReady
             }
             ACTION_PAUSE -> {
                 if (wakeLock?.isHeld == true) {

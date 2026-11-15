@@ -156,6 +156,7 @@ fun HomeScreen(
 
     val alwaysOnState by viewModel.alwaysOnState.collectAsStateWithLifecycle()
     val alwaysOnSoundLevel by viewModel.alwaysOnSoundLevel.collectAsStateWithLifecycle()
+    val isWakeModelReady by viewModel.isWakeModelReady.collectAsStateWithLifecycle()
     var showEnrollmentDialog by remember { mutableStateOf(false) }
 
     var selectedTab by remember { mutableIntStateOf(0) } // 0: Live Voice Matrix, 1: High-Fi Audio WAV
@@ -471,7 +472,8 @@ fun HomeScreen(
                             onPauseListening = { viewModel.pauseAlwaysOn(context) },
                             onResumeListening = { viewModel.resumeAlwaysOn(context) },
                             onEnrollVoiceClick = { showEnrollmentDialog = true },
-                            onOpenDiagnostics = onNavigateToDiagnostics
+                            onOpenDiagnostics = onNavigateToDiagnostics,
+                            isWakeModelReady = isWakeModelReady
                         )
                     }
 
@@ -1117,12 +1119,11 @@ fun HomeScreen(
             isCurrentlyEnrolled = viewModel.isSpeakerEnrolled(context),
             isVerificationEnabled = viewModel.isSpeakerVerificationEnabled(context),
             onDismissRequest = { showEnrollmentDialog = false },
-            onEnrollSample = { passIndex ->
-                viewModel.enrollVoiceSample(context) { success, msg ->
-                    if (!success && msg != null) {
-                        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-                    }
-                }
+            onStartEnrollment = {
+                viewModel.startVoiceEnrollment(context)
+            },
+            onEnrollSample = { passIndex, onComplete ->
+                viewModel.enrollVoiceSample(context, onComplete)
             },
             onFinalizeEnrollment = {
                 viewModel.finalizeVoiceEnrollment(context)

@@ -30,6 +30,24 @@ object JarvisVoiceCoordinator {
 
     private val preemptionStack = ArrayDeque<AudioOwner>()
 
+    interface PreemptionHandler {
+        fun onPreempted(byOwner: AudioOwner)
+        fun onRestored()
+    }
+
+    @Volatile
+    private var preemptionHandler: PreemptionHandler? = null
+
+    fun registerPreemptionHandler(handler: PreemptionHandler) {
+        preemptionHandler = handler
+    }
+
+    fun unregisterPreemptionHandler(handler: PreemptionHandler) {
+        if (preemptionHandler == handler) {
+            preemptionHandler = null
+        }
+    }
+
     @Synchronized
     fun requestMicrophone(requester: AudioOwner): Boolean {
         val current = _currentOwner.value
@@ -48,6 +66,13 @@ object JarvisVoiceCoordinator {
         if (requester.priority > current.priority) {
             Log.i(TAG, "Preempting $current (priority ${current.priority}) for $requester (priority ${requester.priority})")
             preemptionStack.push(current)
+            if (current == AudioOwner.ALWAYS_ON_LISTENER) {
+                try {
+                    preemptionHandler?.onPreempted(requester)
+                } catch (e: Throwable) {
+                    Log.e(TAG, "Error in preemptionHandler onPreempted: ${e.message}", e)
+                }
+            }
             _currentOwner.value = requester
             return true
         }
@@ -71,6 +96,14 @@ object JarvisVoiceCoordinator {
             }
             Log.i(TAG, "Restored microphone owner to $nextOwner (remaining stack: $preemptionStack)")
             _currentOwner.value = nextOwner
+
+            if (nextOwner == AudioOwner.ALWAYS_ON_LISTENER) {
+                try {
+                    preemptionHandler?.onRestored()
+                } catch (e: Throwable) {
+                    Log.e(TAG, "Error in preemptionHandler onRestored: ${e.message}", e)
+                }
+            }
         }
     }
 

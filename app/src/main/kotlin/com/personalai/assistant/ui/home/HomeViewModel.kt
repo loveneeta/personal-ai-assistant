@@ -60,6 +60,7 @@ class HomeViewModel(
     // Always-Ready Hands-Free Wake-Word states
     val alwaysOnState: StateFlow<JarvisAudioState> = JarvisAlwaysOnService.serviceState
     val alwaysOnSoundLevel: StateFlow<Float> = JarvisAlwaysOnService.soundLevel
+    val isWakeModelReady: StateFlow<Boolean> = JarvisAlwaysOnService.isWakeModelReady
 
     init {
         // Automatically reconcile incomplete recordings from crashes on launch
@@ -105,6 +106,10 @@ class HomeViewModel(
 
     fun deleteSpeakerProfile(context: Context) {
         SpeakerProfileManager.getInstance(context).deleteProfile()
+    }
+
+    fun startVoiceEnrollment(context: Context) {
+        SpeakerProfileManager.getInstance(context).startEnrollment()
     }
 
     fun enrollVoiceSample(context: Context, onResult: (Boolean, String?) -> Unit) {

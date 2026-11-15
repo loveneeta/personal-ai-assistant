@@ -8,7 +8,7 @@ import kotlin.math.sqrt
 
 data class RecordingHealthMetrics(
     val micState: String = "IDLE", // "IDLE", "CAPTURING", "PAUSED", "RECOVERING", "ERROR"
-    val audioSource: String = "MIC (16000 Hz, 16-bit PCM Mono)",
+    val audioSource: String = "OMNI-MIC 360° (16000 Hz, 16-bit PCM Mono)",
     val sampleRate: Int = 16000,
     val lastReadTimestampMs: Long = 0L,
     val bytesPerSecond: Long = 0L,

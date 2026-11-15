@@ -73,6 +73,7 @@ fun JarvisAlwaysReadyPanel(
     onResumeListening: () -> Unit,
     onEnrollVoiceClick: () -> Unit,
     onOpenDiagnostics: (() -> Unit)? = null,
+    isWakeModelReady: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val isServiceActive = currentState != JarvisAudioState.IDLE_DISABLED &&
@@ -189,22 +190,23 @@ fun JarvisAlwaysReadyPanel(
                         )
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = when (currentState) {
-                                JarvisAudioState.WAKE_LISTENING -> "WAITING FOR \"JARVIS\""
-                                JarvisAudioState.WAKE_DETECTED -> "WAKE DETECTED // GREETING"
-                                JarvisAudioState.VERIFYING_SPEAKER -> "VERIFYING VOICE IDENTITY..."
-                                JarvisAudioState.COMMAND_LISTENING -> "LISTENING TO COMMAND (HINGLISH/ENG)"
-                                JarvisAudioState.PROCESSING -> "QUERYING ON-DEVICE RAG MEMORY"
-                                JarvisAudioState.SPEAKING -> "J.A.R.V.I.S. VOCAL RESPONSE"
-                                JarvisAudioState.PAUSED -> "MICROPHONE PAUSED BY USER"
-                                JarvisAudioState.PERMISSION_DENIED -> "RECORD AUDIO PERMISSION REQUIRED"
-                                JarvisAudioState.ERROR -> "AUDIO CAPTURE ERROR"
+                            text = when {
+                                currentState == JarvisAudioState.WAKE_LISTENING && !isWakeModelReady -> "OMNI-MIC ON // TAP ORB TO SPEAK (CONFIG -> MODELS FOR WAKE)"
+                                currentState == JarvisAudioState.WAKE_LISTENING -> "OMNI-MIC 360° ACTIVE // WAITING FOR \"JARVIS\""
+                                currentState == JarvisAudioState.WAKE_DETECTED -> "WAKE DETECTED // GREETING"
+                                currentState == JarvisAudioState.VERIFYING_SPEAKER -> "VERIFYING VOICE IDENTITY..."
+                                currentState == JarvisAudioState.COMMAND_LISTENING -> "LISTENING TO COMMAND (ALL MICS ACTIVE)"
+                                currentState == JarvisAudioState.PROCESSING -> "QUERYING ON-DEVICE RAG MEMORY"
+                                currentState == JarvisAudioState.SPEAKING -> "J.A.R.V.I.S. VOCAL RESPONSE"
+                                currentState == JarvisAudioState.PAUSED -> "MICROPHONE YIELDED / PAUSED"
+                                currentState == JarvisAudioState.PERMISSION_DENIED -> "RECORD AUDIO PERMISSION REQUIRED"
+                                currentState == JarvisAudioState.ERROR -> "AUDIO CAPTURE ERROR"
                                 else -> "OFFLINE // STANDBY"
                             },
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Bold,
                             color = when (currentState) {
-                                JarvisAudioState.WAKE_LISTENING -> JarvisIceBlue
+                                JarvisAudioState.WAKE_LISTENING -> if (!isWakeModelReady) JarvisElectricBlue else JarvisIceBlue
                                 JarvisAudioState.WAKE_DETECTED, JarvisAudioState.COMMAND_LISTENING -> JarvisCyan
                                 JarvisAudioState.VERIFYING_SPEAKER, JarvisAudioState.PROCESSING -> JarvisNeonViolet
                                 JarvisAudioState.SPEAKING -> JarvisElectricBlue
@@ -218,13 +220,15 @@ fun JarvisAlwaysReadyPanel(
 
                     // Status Pill
                     JarvisStatusBadge(
-                        label = when (currentState) {
-                            JarvisAudioState.WAKE_LISTENING -> "MIC ACTIVE"
-                            JarvisAudioState.COMMAND_LISTENING -> "LISTENING"
-                            JarvisAudioState.PROCESSING -> "COMPUTING"
-                            JarvisAudioState.SPEAKING -> "TALKING"
-                            JarvisAudioState.PAUSED -> "PAUSED"
-                            JarvisAudioState.ERROR -> "FAULT"
+                        label = when {
+                            !isServiceActive -> "STANDBY"
+                            !isWakeModelReady && currentState == JarvisAudioState.WAKE_LISTENING -> "MIC ON / ORB"
+                            currentState == JarvisAudioState.WAKE_LISTENING -> "ALL MICS ON"
+                            currentState == JarvisAudioState.COMMAND_LISTENING -> "LISTENING"
+                            currentState == JarvisAudioState.PROCESSING -> "COMPUTING"
+                            currentState == JarvisAudioState.SPEAKING -> "TALKING"
+                            currentState == JarvisAudioState.PAUSED -> "PAUSED"
+                            currentState == JarvisAudioState.ERROR -> "FAULT"
                             else -> "STANDBY"
                         },
                         statusColor = when (currentState) {
