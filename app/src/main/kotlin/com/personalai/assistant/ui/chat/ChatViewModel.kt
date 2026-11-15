@@ -21,7 +21,7 @@ class ChatViewModel(
     private val context: Context? = null
 ) : ViewModel() {
 
-    private val chatEngine = LocalRagChatEngine(repository)
+    private val chatEngine = LocalRagChatEngine(repository, context)
 
     private val _isOpenJarvisActive = MutableStateFlow(
         context?.let { OpenJarvisManager.isEnabled(it) } ?: false

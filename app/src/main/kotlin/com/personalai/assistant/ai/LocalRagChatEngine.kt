@@ -1,5 +1,6 @@
 package com.personalai.assistant.ai
 
+import android.content.Context
 import com.personalai.assistant.data.local.entity.MeetingEntity
 import com.personalai.assistant.data.local.entity.NoteEntity
 import com.personalai.assistant.data.local.entity.RecordingEntity
@@ -7,6 +8,8 @@ import com.personalai.assistant.data.local.entity.TaskEntity
 import com.personalai.assistant.data.local.entity.TaskStatus
 import com.personalai.assistant.data.local.entity.TranscriptEntity
 import com.personalai.assistant.data.repository.AppRepository
+import com.personalai.assistant.notifications.JarvisNotificationBuffer
+import com.personalai.assistant.notifications.NotificationSummarizer
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -27,7 +30,10 @@ data class ChatMessage(
     val citations: List<Citation> = emptyList()
 )
 
-class LocalRagChatEngine(private val repository: AppRepository) {
+class LocalRagChatEngine(
+    private val repository: AppRepository,
+    private val context: Context? = null
+) {
 
     private var pendingIntent: UserIntent? = null
 
@@ -49,7 +55,7 @@ class LocalRagChatEngine(private val repository: AppRepository) {
         "se", "ko", "ki", "ka", "ke", "karo", "karein", "bhi", "yeh", "woh"
     )
 
-    suspend fun answerQuery(query: String): ChatMessage {
+    suspend fun answerQuery(query: String, callerContext: Context? = null): ChatMessage {
         val trimmed = query.trim()
         val classified = IntentClassifier.classify(trimmed, pendingIntent)
 
@@ -220,6 +226,28 @@ class LocalRagChatEngine(private val repository: AppRepository) {
             return ChatMessage(
                 isUser = false,
                 content = "Would you like me to confirm and save this note: '${classified.content}'?",
+                citations = emptyList()
+            )
+        }
+
+        // 6b. Check Messages & Notifications Intent (WhatsApp, Gmail, SMS)
+        if (classified is UserIntent.CheckMessages) {
+            val effectiveContext = callerContext ?: this.context
+            val buffer = effectiveContext?.let { JarvisNotificationBuffer.getInstance(it) }
+            val replyText = when {
+                buffer == null -> "I cannot access notifications right now. Please enable Notification Listener in JARVIS Permissions."
+                !classified.sender.isNullOrBlank() -> {
+                    val msgs = buffer.getMessagesBySender(classified.sender)
+                    NotificationSummarizer.summarizeFromSender(classified.sender, msgs)
+                }
+                else -> {
+                    val msgs = buffer.getRecentMessages(10)
+                    NotificationSummarizer.summarizeRecent(msgs)
+                }
+            }
+            return ChatMessage(
+                isUser = false,
+                content = replyText,
                 citations = emptyList()
             )
         }

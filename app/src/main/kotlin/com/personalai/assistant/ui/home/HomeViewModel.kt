@@ -197,7 +197,7 @@ class HomeViewModel(
                     val result = actionExecutor.execute(parsedAction)
                     result.spokenFeedback
                 } else {
-                    val chatResponse = ragEngine.answerQuery(trimmed)
+                    val chatResponse = ragEngine.answerQuery(trimmed, context)
                     chatResponse.content
                 }
                 _lastAssistantResponse.value = feedback

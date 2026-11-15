@@ -645,7 +645,7 @@ class JarvisVoiceStateMachine(
                 return@launch
             }
 
-            val chatResponse = ragEngine.answerQuery(command)
+            val chatResponse = ragEngine.answerQuery(command, context)
             _lastAssistantResponse.value = chatResponse.content
             logWakeEvent(configuredWakeWord, true, command, chatResponse.content, "COMPLETED")
             speakResponse(chatResponse.content)

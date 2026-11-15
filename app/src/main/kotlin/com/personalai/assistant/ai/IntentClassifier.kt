@@ -29,6 +29,11 @@ sealed class UserIntent {
         val content: String?
     ) : UserIntent()
 
+    data class CheckMessages(
+        val sender: String? = null,
+        val app: String? = null
+    ) : UserIntent()
+
     data class InformationQuery(
         val queryType: QueryType,
         val query: String
@@ -198,6 +203,44 @@ object IntentClassifier {
 
             val content = if (cleanNote.isBlank()) null else cleanNote
             return UserIntent.CreateNote(content = content)
+        }
+
+        // 6b. Check Messages & Incoming Notifications
+        val isCheckMessages = lower.contains("check message") ||
+                lower.contains("check messages") ||
+                lower.contains("read message") ||
+                lower.contains("read messages") ||
+                lower.contains("unread message") ||
+                lower.contains("unread messages") ||
+                lower.contains("check whatsapp") ||
+                lower.contains("whatsapp check") ||
+                lower.contains("whatsapp message") ||
+                lower.contains("check email") ||
+                lower.contains("check emails") ||
+                lower.contains("koi message") ||
+                lower.contains("kya message") ||
+                lower.contains("messages summarize") ||
+                lower.contains("summarize message") ||
+                lower.contains("recent message")
+
+        if (isCheckMessages) {
+            val app = when {
+                lower.contains("whatsapp") -> "WhatsApp"
+                lower.contains("email") || lower.contains("gmail") -> "Gmail"
+                lower.contains("sms") -> "SMS"
+                else -> null
+            }
+
+            var sender: String? = null
+            val senderMatch = Regex("(?:from|ka|ke|ki)\\s+([a-zA-Z0-9]+)").find(lower)
+            if (senderMatch != null) {
+                val candidate = senderMatch.groupValues[1]
+                if (candidate != "whatsapp" && candidate != "gmail" && candidate != "message" && candidate != "messages") {
+                    sender = candidate
+                }
+            }
+
+            return UserIntent.CheckMessages(sender = sender, app = app)
         }
 
         // 7. Information Queries

@@ -58,6 +58,17 @@
             android:exported="false"
             android:foregroundServiceType="microphone" />
 
+        <!-- Notification Listener Service for WhatsApp, Gmail, and SMS integration -->
+        <service
+            android:name=".notifications.JarvisNotificationListenerService"
+            android:label="JARVIS Notification &amp; Communication Bridge"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
         <activity
             android:name=".MainActivity"
             android:exported="true">
