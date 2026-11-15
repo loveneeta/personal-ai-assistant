@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Hearing
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Share
@@ -66,6 +67,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.personalai.assistant.playback.JarvisTtsEngine
 import com.personalai.assistant.retention.AudioRetentionPolicy
 import com.personalai.assistant.ui.components.JarvisGlassCard
 import com.personalai.assistant.ui.theme.JarvisBorderCyan
@@ -655,7 +657,61 @@ fun SettingsScreen(
                 }
             }
 
-            // 4. Audio Storage & Retention Policies
+            // 4. Neural Vocal Engine & Natural Cadence
+            JarvisGlassCard(
+                modifier = Modifier.fillMaxWidth(),
+                borderColor = JarvisBorderCyan
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.RecordVoiceOver, contentDescription = null, tint = JarvisCyan)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            "Neural Vocal Engine & Cadence",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = JarvisTextPrimary
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        "Configured with human conversational acoustics: refined 0.94x executive pitch, 1.03x natural cadence, and automatic neural voice pack matching. Download high-definition Google voice packs in system settings for ultra-realistic studio quality.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = JarvisTextSecondary
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                JarvisTtsEngine.getInstance(context).speak(
+                                    "Good day. Neural vocal synthesis is calibrated, acoustic cadence is optimized, and all full-phone integrations are active and standing by."
+                                )
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = JarvisCyan, contentColor = JarvisCosmicBlack),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Test Cadence", fontWeight = FontWeight.Bold)
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                try {
+                                    context.startActivity(JarvisTtsEngine.getInstance(context).createTtsSettingsIntent())
+                                } catch (e: Exception) {
+                                    Toast.makeText(context, "Cannot open TTS settings: ${e.message}", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Download HD Voices")
+                        }
+                    }
+                }
+            }
+
+            // 5. Audio Storage & Retention Policies
             JarvisGlassCard(
                 modifier = Modifier.fillMaxWidth(),
                 borderColor = JarvisBorderCyan

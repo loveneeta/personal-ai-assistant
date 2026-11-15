@@ -118,24 +118,22 @@ class JarvisPermissionManager private constructor(private val context: Context) 
                 category = PermissionCategory.COMMUNICATIONS,
                 manifestPermissions = listOf(
                     Manifest.permission.READ_SMS,
-                    Manifest.permission.SEND_SMS,
-                    Manifest.permission.RECEIVE_SMS
+                    Manifest.permission.SEND_SMS
                 ),
-                purpose = "Reads incoming SMS messages for summaries and drafts outbound SMS upon user approval.",
+                purpose = "Reads inbox SMS messages for briefings and drafts outbound SMS upon user approval.",
                 dataAccessible = "SMS conversation text and sender phone numbers."
             ),
 
-            // 7. Phone Calls & Call Log
+            // 7. Phone Calls
             createPermissionItem(
                 id = "phone_calls",
-                title = "Phone & Call Manager",
+                title = "Phone & Dialer",
                 category = PermissionCategory.COMMUNICATIONS,
                 manifestPermissions = listOf(
-                    Manifest.permission.CALL_PHONE,
-                    Manifest.permission.READ_CALL_LOG
+                    Manifest.permission.CALL_PHONE
                 ),
-                purpose = "Initiates voice phone calls and summarizes recent call activity when requested.",
-                dataAccessible = "Call history records and telephony dialer control."
+                purpose = "Initiates voice phone calls to contacts upon user confirmation.",
+                dataAccessible = "Telephony dialer control."
             )
         )
 

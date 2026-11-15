@@ -1,11 +1,13 @@
 package com.personalai.assistant.playback
 
 import android.content.Context
+import android.content.Intent
 import android.media.AudioAttributes
 import android.os.Build
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.speech.tts.Voice
 import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -85,12 +87,21 @@ class JarvisTtsEngine private constructor(private val context: Context) : TextTo
                 Log.w(TAG, "Failed to set audio attributes on TTS: ${e.message}")
             }
 
-            // 2. Set default language (Indian English with fallback)
+            // 2. Configure natural vocal acoustic parameters
+            try {
+                engine.setPitch(0.94f) // Slightly deeper, refined executive resonance
+                engine.setSpeechRate(1.03f) // Natural conversational rhythm
+            } catch (e: Throwable) {
+                Log.w(TAG, "Failed to set pitch/rate on TTS: ${e.message}")
+            }
+
+            // 3. Set default language and select highest-quality natural neural voice
             var langSet = false
             try {
                 val inLocale = Locale.forLanguageTag("en-IN")
                 if (engine.isLanguageAvailable(inLocale) >= TextToSpeech.LANG_AVAILABLE) {
                     engine.language = inLocale
+                    selectBestNaturalVoice(engine, inLocale)
                     langSet = true
                     Log.i(TAG, "Configured TTS language to Indian English (en-IN)")
                 }
@@ -99,13 +110,14 @@ class JarvisTtsEngine private constructor(private val context: Context) : TextTo
             if (!langSet) {
                 try {
                     engine.language = Locale.ENGLISH
+                    selectBestNaturalVoice(engine, Locale.ENGLISH)
                     Log.i(TAG, "Configured TTS language to Locale.ENGLISH")
                 } catch (_: Throwable) {
                     engine.language = Locale.getDefault()
                 }
             }
 
-            // 3. Set Utterance Progress Listener
+            // 4. Set Utterance Progress Listener
             engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) {
                     _isSpeaking.value = true
@@ -183,6 +195,7 @@ class JarvisTtsEngine private constructor(private val context: Context) : TextTo
                 val hiLocale = Locale.forLanguageTag("hi-IN")
                 if (engine.isLanguageAvailable(hiLocale) >= TextToSpeech.LANG_AVAILABLE) {
                     engine.language = hiLocale
+                    selectBestNaturalVoice(engine, hiLocale)
                 }
             } catch (_: Throwable) {}
         } else {
@@ -190,6 +203,7 @@ class JarvisTtsEngine private constructor(private val context: Context) : TextTo
                 val inLocale = Locale.forLanguageTag("en-IN")
                 if (engine.isLanguageAvailable(inLocale) >= TextToSpeech.LANG_AVAILABLE) {
                     engine.language = inLocale
+                    selectBestNaturalVoice(engine, inLocale)
                 }
             } catch (_: Throwable) {}
         }
@@ -241,6 +255,7 @@ class JarvisTtsEngine private constructor(private val context: Context) : TextTo
 
     /**
      * Strips markdown symbols, asterisks, URLs, and code blocks into natural spoken prose.
+     * Expands common abbreviations and adds cadence pauses for realistic human speech.
      */
     private fun sanitizeForSpeech(raw: String): String {
         var text = raw
@@ -264,13 +279,67 @@ class JarvisTtsEngine private constructor(private val context: Context) : TextTo
         text = text.replace(Regex("```[\\s\\S]*?```"), "")
         text = text.replace(Regex("`([^`]+)`"), "$1")
 
-        // Clean bullet points
+        // Clean bullet points with a conversational pause
         text = text.replace(Regex("^[\\-*•]\\s+", RegexOption.MULTILINE), "")
+
+        // Convert common abbreviations into natural vocal words
+        text = text.replace(Regex("(?i)\\bmin\\b"), "minutes")
+        text = text.replace(Regex("(?i)\\bsec\\b"), "seconds")
+        text = text.replace(Regex("(?i)\\bhr\\b"), "hours")
+        text = text.replace(Regex("(?i)\\bhrs\\b"), "hours")
+        text = text.replace(Regex("(?i)\\bapprox\\.?"), "approximately")
+        text = text.replace(Regex("(?i)\\bvs\\.?"), "versus")
+        text = text.replace(Regex("(?i)\\be\\.g\\.?"), "for example")
+        text = text.replace(Regex("(?i)\\bi\\.e\\.?"), "that is")
+
+        // Replace newlines with natural pauses
+        text = text.replace(Regex("\n+"), ". ")
 
         // Collapse duplicate whitespace
         text = text.replace(Regex("\\s+"), " ").trim()
 
         return text
+    }
+
+    /**
+     * Queries available on-device voices and selects the highest-quality neural voice.
+     */
+    private fun selectBestNaturalVoice(engine: TextToSpeech, targetLocale: Locale) {
+        try {
+            val availableVoices = engine.voices ?: return
+            val candidateVoices = availableVoices.filter { voice ->
+                voice.locale.language.equals(targetLocale.language, ignoreCase = true) &&
+                        !voice.features.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED)
+            }
+
+            if (candidateVoices.isNotEmpty()) {
+                val best = candidateVoices.maxByOrNull { voice ->
+                    var score = 0
+                    if (voice.quality >= Voice.QUALITY_VERY_HIGH) score += 50
+                    else if (voice.quality >= Voice.QUALITY_HIGH) score += 30
+                    if (voice.name.contains("neural", ignoreCase = true) || voice.name.contains("wavenet", ignoreCase = true)) score += 40
+                    if (voice.name.contains("network", ignoreCase = true)) score += 15
+                    if (targetLocale.country.isNotBlank() && voice.locale.country.equals(targetLocale.country, ignoreCase = true)) score += 20
+                    score
+                }
+                if (best != null) {
+                    engine.voice = best
+                    Log.i(TAG, "Selected natural neural voice: ${best.name} (quality=${best.quality}, locale=${best.locale})")
+                }
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "Voice selection fallback: ${e.message}")
+        }
+    }
+
+    /**
+     * Creates an Intent to launch Android's Text-to-Speech settings so the user
+     * can download high-definition Google Neural voice packs directly on their device.
+     */
+    fun createTtsSettingsIntent(): Intent {
+        return Intent("com.android.settings.TTS_SETTINGS").apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
     }
 
     private fun containsDevanagari(text: String): Boolean {
