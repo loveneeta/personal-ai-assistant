@@ -18,6 +18,8 @@ import com.personalai.assistant.ai.ChatMessage
 import com.personalai.assistant.ai.LocalRagChatEngine
 import com.personalai.assistant.data.local.entity.WakeEventEntity
 import com.personalai.assistant.data.repository.AppRepository
+import com.personalai.assistant.orchestrator.AgentExecutionResult
+import com.personalai.assistant.orchestrator.MasterJarvisAgent
 import com.personalai.assistant.playback.JarvisTtsEngine
 import com.personalai.assistant.recording.AudioCaptureHelper
 import com.personalai.assistant.transcription.AsrEngine
@@ -635,6 +637,32 @@ class JarvisVoiceStateMachine(
         _activeUtterance.value = command
         scope.launch {
             transitionTo(JarvisAudioState.PROCESSING)
+
+            // 1. Route through Master Jarvis Agent (WhatsApp, SMS, Phone, Calendar, Device)
+            val masterAgent = MasterJarvisAgent(context)
+            when (val result = masterAgent.executeCommand(command)) {
+                is AgentExecutionResult.Immediate -> {
+                    _lastAssistantResponse.value = result.feedback
+                    logWakeEvent(configuredWakeWord, true, command, result.feedback, "COMPLETED")
+                    speakResponse(result.feedback)
+                    return@launch
+                }
+                is AgentExecutionResult.StagedForApproval -> {
+                    _lastAssistantResponse.value = result.message
+                    logWakeEvent(configuredWakeWord, true, command, result.message, "STAGED")
+                    speakResponse(result.message)
+                    return@launch
+                }
+                is AgentExecutionResult.Handled -> {
+                    _lastAssistantResponse.value = result.feedback
+                    logWakeEvent(configuredWakeWord, true, command, result.feedback, "COMPLETED")
+                    speakResponse(result.feedback)
+                    return@launch
+                }
+                is AgentExecutionResult.Unhandled -> {
+                    // Fall through to deterministic ActionExecutor & RAG
+                }
+            }
 
             val parsedAction = actionExecutor.parseAction(command)
             if (parsedAction !is AssistantAction.None) {

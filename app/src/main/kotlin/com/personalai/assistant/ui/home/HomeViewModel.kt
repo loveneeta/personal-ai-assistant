@@ -9,6 +9,8 @@ import com.personalai.assistant.ai.LocalRagChatEngine
 import com.personalai.assistant.data.local.entity.RecordingEntity
 import com.personalai.assistant.data.local.entity.WakeEventEntity
 import com.personalai.assistant.data.repository.AppRepository
+import com.personalai.assistant.orchestrator.AgentExecutionResult
+import com.personalai.assistant.orchestrator.MasterJarvisAgent
 import com.personalai.assistant.playback.JarvisTtsEngine
 import com.personalai.assistant.recording.AudioRecordingService
 import com.personalai.assistant.recording.RecordingState
@@ -191,6 +193,30 @@ class HomeViewModel(
 
         viewModelScope.launch {
             try {
+                // 1. Route through Master Jarvis Agent (WhatsApp, SMS, Phone, Calendar, Device)
+                val masterAgent = MasterJarvisAgent(context)
+                when (val result = masterAgent.executeCommand(trimmed)) {
+                    is AgentExecutionResult.Immediate -> {
+                        _lastAssistantResponse.value = result.feedback
+                        JarvisTtsEngine.getInstance(context).speak(result.feedback)
+                        return@launch
+                    }
+                    is AgentExecutionResult.StagedForApproval -> {
+                        _lastAssistantResponse.value = result.message
+                        JarvisTtsEngine.getInstance(context).speak(result.message)
+                        return@launch
+                    }
+                    is AgentExecutionResult.Handled -> {
+                        _lastAssistantResponse.value = result.feedback
+                        JarvisTtsEngine.getInstance(context).speak(result.feedback)
+                        return@launch
+                    }
+                    is AgentExecutionResult.Unhandled -> {
+                        // Fall through to deterministic ActionExecutor & RAG
+                    }
+                }
+
+                // 2. Fall back to Android Action Executor or RAG
                 val actionExecutor = AndroidActionExecutor(context)
                 val parsedAction = actionExecutor.parseAction(trimmed)
                 val feedback = if (parsedAction !is AssistantAction.None) {

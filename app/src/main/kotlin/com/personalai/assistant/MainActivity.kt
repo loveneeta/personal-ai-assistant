@@ -12,6 +12,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
+import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.personalai.assistant.approval.ActionApprovalEngine
+import com.personalai.assistant.approval.ui.ActionApprovalDialog
 import com.personalai.assistant.ui.theme.PersonalAIAssistantTheme
 import com.personalai.assistant.wakeword.JarvisAlwaysOnService
 
@@ -37,7 +41,25 @@ class MainActivity : ComponentActivity() {
 
     enableEdgeToEdge()
     setContent {
-      PersonalAIAssistantTheme { Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) { MainNavigation() } }
+      PersonalAIAssistantTheme {
+        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+          MainNavigation()
+
+          // Universal Action Approval Dialog (Level 3 & 4 human verification gate)
+          val currentApproval by ActionApprovalEngine.getInstance().currentApprovalRequest.collectAsStateWithLifecycle()
+          currentApproval?.let { request ->
+            ActionApprovalDialog(
+              request = request,
+              onApprove = { finalPayload ->
+                ActionApprovalEngine.getInstance().approve(request.id, finalPayload)
+              },
+              onReject = {
+                ActionApprovalEngine.getInstance().reject(request.id)
+              }
+            )
+          }
+        }
+      }
     }
   }
 }
