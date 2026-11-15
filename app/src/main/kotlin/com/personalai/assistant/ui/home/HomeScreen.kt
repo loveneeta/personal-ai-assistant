@@ -138,6 +138,7 @@ fun HomeScreen(
     onNavigateToRecordings: () -> Unit,
     onNavigateToRecordingDetails: (Long) -> Unit,
     onNavigateToSettings: () -> Unit,
+    onNavigateToPermissions: () -> Unit = {},
     onNavigateToMeetings: () -> Unit = {},
     onNavigateToTasks: () -> Unit = {},
     onNavigateToMemory: () -> Unit = {},
@@ -255,6 +256,7 @@ fun HomeScreen(
                         title = "J.A.R.V.I.S.",
                         subtitle = "LOCAL QUANTUM CORE // ₹0 PRIVACY GUARANTEE",
                         onNavigateToSettings = onNavigateToSettings,
+                        onNavigateToPermissions = onNavigateToPermissions,
                         onToggleSidebar = if (isWideScreen) { { isSidebarExpanded = !isSidebarExpanded } } else null,
                         isSidebarOpen = isSidebarExpanded
                     )

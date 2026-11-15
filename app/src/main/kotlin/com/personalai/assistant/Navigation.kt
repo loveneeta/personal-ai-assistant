@@ -9,6 +9,7 @@ import androidx.navigation3.ui.NavDisplay
 import com.personalai.assistant.data.repository.AppRepository
 import com.personalai.assistant.transcription.TranscriptionQueueManager
 import com.personalai.assistant.transcription.models.ModelManager
+import com.personalai.assistant.permissions.ui.PermissionDashboardScreen
 import com.personalai.assistant.ui.chat.ChatScreen
 import com.personalai.assistant.ui.chat.ChatViewModel
 import com.personalai.assistant.ui.home.HomeScreen
@@ -51,6 +52,7 @@ fun MainNavigation() {
                     onNavigateToRecordings = { backStack.add(RecordingsNavKey) },
                     onNavigateToRecordingDetails = { id -> backStack.add(RecordingDetailsNavKey(id)) },
                     onNavigateToSettings = { backStack.add(SettingsNavKey) },
+                    onNavigateToPermissions = { backStack.add(PermissionsNavKey) },
                     onNavigateToMeetings = { backStack.add(MeetingsNavKey) },
                     onNavigateToTasks = { backStack.add(TasksNavKey) },
                     onNavigateToMemory = { backStack.add(MemoryNavKey) },
@@ -144,7 +146,8 @@ fun MainNavigation() {
                 SettingsScreen(
                     viewModel = settingsViewModel,
                     onNavigateBack = { backStack.removeLastOrNull() },
-                    onNavigateToModels = { backStack.add(ModelsNavKey) }
+                    onNavigateToModels = { backStack.add(ModelsNavKey) },
+                    onNavigateToPermissions = { backStack.add(PermissionsNavKey) }
                 )
             }
 
@@ -164,6 +167,12 @@ fun MainNavigation() {
                 }
                 com.personalai.assistant.ui.diagnostics.VoiceDiagnosticsScreen(
                     viewModel = diagViewModel,
+                    onNavigateBack = { backStack.removeLastOrNull() }
+                )
+            }
+
+            entry<PermissionsNavKey> {
+                PermissionDashboardScreen(
                     onNavigateBack = { backStack.removeLastOrNull() }
                 )
             }

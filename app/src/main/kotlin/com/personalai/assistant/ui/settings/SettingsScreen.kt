@@ -90,6 +90,7 @@ fun SettingsScreen(
     viewModel: SettingsViewModel,
     onNavigateBack: () -> Unit,
     onNavigateToModels: () -> Unit = {},
+    onNavigateToPermissions: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -583,6 +584,38 @@ fun SettingsScreen(
                         colors = ButtonDefaults.buttonColors(containerColor = JarvisCyan, contentColor = JarvisCosmicBlack)
                     ) {
                         Text("Manage Speech Models", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+
+            // 2b. Executive Security & Permissions Matrix Card
+            JarvisGlassCard(
+                modifier = Modifier.fillMaxWidth(),
+                borderColor = JarvisCyan
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Security, contentDescription = null, tint = JarvisCyan)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            "Security & Permission Matrix",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = JarvisTextPrimary
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        "Manage, audit, and revoke system access across Audio, Notifications, Contacts, SMS, and Calendar. Review exact data scopes and last access times.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = JarvisTextSecondary
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Button(
+                        onClick = onNavigateToPermissions,
+                        colors = ButtonDefaults.buttonColors(containerColor = JarvisCyan, contentColor = JarvisCosmicBlack)
+                    ) {
+                        Text("Manage Permissions & Privacy", fontWeight = FontWeight.Bold)
                     }
                 }
             }

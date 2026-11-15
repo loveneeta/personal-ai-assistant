@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MenuOpen
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -77,6 +78,7 @@ fun JarvisTopAppBar(
     title: String = "J.A.R.V.I.S.",
     subtitle: String = "QUANTUM AI // OFFLINE READY",
     onNavigateToSettings: (() -> Unit)? = null,
+    onNavigateToPermissions: (() -> Unit)? = null,
     onToggleSidebar: (() -> Unit)? = null,
     isSidebarOpen: Boolean = false,
     modifier: Modifier = Modifier
@@ -175,8 +177,22 @@ fun JarvisTopAppBar(
                     isPulsing = true
                 )
 
+                if (onNavigateToPermissions != null) {
+                    Spacer(modifier = Modifier.width(6.dp))
+                    IconButton(
+                        onClick = onNavigateToPermissions,
+                        modifier = Modifier.size(38.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Security,
+                            contentDescription = "Permission & Security Matrix",
+                            tint = JarvisCyanElectric
+                        )
+                    }
+                }
+
                 if (onNavigateToSettings != null) {
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                     IconButton(
                         onClick = onNavigateToSettings,
                         modifier = Modifier.size(38.dp)
