@@ -40,9 +40,16 @@ object AudioCaptureHelper {
         sampleRate: Int = 16000,
         channelConfig: Int = AudioFormat.CHANNEL_IN_MONO,
         audioFormat: Int = AudioFormat.ENCODING_PCM_16BIT,
-        bufferSize: Int
+        bufferSize: Int,
+        preferredDevice: android.media.AudioDeviceInfo? = null
     ): AudioRecord? {
         val candidateSources = mutableListOf<Pair<Int, String>>()
+
+        // If a Bluetooth SCO peripheral is active, prioritize VOICE_COMMUNICATION
+        if (preferredDevice != null && (preferredDevice.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+            (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && preferredDevice.type == android.media.AudioDeviceInfo.TYPE_BLE_HEADSET))) {
+            candidateSources.add(MediaRecorder.AudioSource.VOICE_COMMUNICATION to "VOICE_COMMUNICATION (Bluetooth SCO / BLE)")
+        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             candidateSources.add(MediaRecorder.AudioSource.UNPROCESSED to "UNPROCESSED (Raw multi-mic, no beamforming)")
@@ -63,6 +70,10 @@ object AudioCaptureHelper {
 
                 if (record.state == AudioRecord.STATE_INITIALIZED) {
                     Log.i(TAG, "AudioRecord initialized using source: $description (source ID: $source)")
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && preferredDevice != null) {
+                        val routed = record.setPreferredDevice(preferredDevice)
+                        Log.i(TAG, "Applied setPreferredDevice(${preferredDevice.productName}) -> success: $routed")
+                    }
                     configureOmniDirectional(record)
                     return record
                 } else {

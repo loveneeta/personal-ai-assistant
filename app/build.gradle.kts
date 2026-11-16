@@ -113,4 +113,7 @@ dependencies {
 
   // On-Device Offline Speech Translation (100% Free / On-Device)
   implementation("com.google.mlkit:translate:17.0.3")
+
+  // Wear OS Companion Bridge (Wearable Data Layer API)
+  implementation("com.google.android.gms:play-services-wearable:18.2.0")
 }

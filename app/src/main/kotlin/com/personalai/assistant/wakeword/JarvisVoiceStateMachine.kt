@@ -16,6 +16,8 @@ import com.personalai.assistant.actions.AndroidActionExecutor
 import com.personalai.assistant.actions.AssistantAction
 import com.personalai.assistant.ai.ChatMessage
 import com.personalai.assistant.ai.LocalRagChatEngine
+import com.personalai.assistant.audio.AudioInputDevice
+import com.personalai.assistant.audio.AudioInputManager
 import com.personalai.assistant.data.local.entity.WakeEventEntity
 import com.personalai.assistant.data.repository.AppRepository
 import com.personalai.assistant.orchestrator.AgentExecutionResult
@@ -105,6 +107,7 @@ class JarvisVoiceStateMachine(
     var rawAudioRetentionEnabled: Boolean = false
 
     private val actionExecutor = AndroidActionExecutor(context)
+    private val audioInputManager = AudioInputManager.getInstance(context)
     private val ragEngine = LocalRagChatEngine(repository)
     private val asrEngine: AsrEngine = MultilingualOfflineAsrEngine(context, ModelManager.getInstance(context))
     private var textToSpeech: TextToSpeech? = null
@@ -178,6 +181,12 @@ class JarvisVoiceStateMachine(
         isPreempted.set(false)
         JarvisVoiceCoordinator.registerPreemptionHandler(preemptionHandler)
 
+        audioInputManager.startMonitoring { newDevice ->
+            if (isDesiredListening.get() && isAudioCapturing.get()) {
+                rebindAudioRecord(newDevice)
+            }
+        }
+
         if (_currentState.value == JarvisAudioState.WAKE_LISTENING && isAudioCapturing.get()) {
             Log.d(TAG, "Already active in WAKE_LISTENING")
             return
@@ -192,6 +201,17 @@ class JarvisVoiceStateMachine(
         }
 
         startAudioLoop()
+    }
+
+    fun rebindAudioRecord(targetDevice: AudioInputDevice) {
+        scope.launch {
+            Log.i(TAG, "Rebinding AudioRecord to device: ${targetDevice.name} (${targetDevice.type})")
+            suspendAudioLoop()
+            delay(100)
+            if (isDesiredListening.get()) {
+                startAudioLoop()
+            }
+        }
     }
 
     @Synchronized
@@ -224,6 +244,7 @@ class JarvisVoiceStateMachine(
         Log.i(TAG, "Stopping hands-free listening")
         isDesiredListening.set(false)
         isPreempted.set(false)
+        audioInputManager.stopMonitoring()
         JarvisVoiceCoordinator.unregisterPreemptionHandler(preemptionHandler)
         currentTtsSessionId.incrementAndGet()
         stopTts()
@@ -331,13 +352,17 @@ class JarvisVoiceStateMachine(
             }
             val bufferSize = Math.max(minBufSize * 2, 4096)
 
+            val currentDevice = audioInputManager.routeToOptimalDevice()
+            Log.i(TAG, "Active audio input route: ${currentDevice.name} (${currentDevice.type})")
+
             val record: AudioRecord
             try {
                 val omniRecord = AudioCaptureHelper.createOmniAudioRecord(
                     sampleRate = SAMPLE_RATE,
                     channelConfig = CHANNEL_CONFIG,
                     audioFormat = AUDIO_FORMAT,
-                    bufferSize = bufferSize
+                    bufferSize = bufferSize,
+                    preferredDevice = currentDevice.deviceInfo
                 )
                 if (omniRecord == null) {
                     Log.e(TAG, "AudioCaptureHelper could not initialize any audio source.")
@@ -395,6 +420,7 @@ class JarvisVoiceStateMachine(
                 var hasSpeechStarted = false
                 var silentSamplesAfterSpeech = 0
 
+                var consecutiveHardwareErrors = 0
                 try {
                     while (isActive && isAudioCapturing.get()) {
                         val currentRecord = audioRecord ?: break
@@ -408,12 +434,21 @@ class JarvisVoiceStateMachine(
                         if (!isAudioCapturing.get() || !isActive) break
 
                         if (read <= 0) {
-                            if (read == AudioRecord.ERROR_INVALID_OPERATION || read == AudioRecord.ERROR_BAD_VALUE) {
+                            if (read == AudioRecord.ERROR_INVALID_OPERATION || read == AudioRecord.ERROR_BAD_VALUE || read == AudioRecord.ERROR_DEAD_OBJECT) {
+                                consecutiveHardwareErrors++
+                                if (consecutiveHardwareErrors >= 3) {
+                                    Log.w(TAG, "Peripheral audio hardware read error ($read). Automatically recovering to built-in mic...")
+                                    consecutiveHardwareErrors = 0
+                                    val fallbackDev = audioInputManager.recoverToBuiltInMic()
+                                    rebindAudioRecord(fallbackDev)
+                                    break
+                                }
                                 if (!isAudioCapturing.get()) break
                             }
                             delay(20)
                             continue
                         }
+                        consecutiveHardwareErrors = 0
 
                         // Calculate RMS sound level for visualizer
                         var sumSquares = 0.0

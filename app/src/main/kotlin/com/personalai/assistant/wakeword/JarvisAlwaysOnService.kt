@@ -50,6 +50,11 @@ class JarvisAlwaysOnService : Service() {
         private val _isWakeModelReady = MutableStateFlow(false)
         val isWakeModelReady: StateFlow<Boolean> = _isWakeModelReady.asStateFlow()
 
+        @Volatile
+        private var activeStateMachine: JarvisVoiceStateMachine? = null
+
+        fun getActiveStateMachine(): JarvisVoiceStateMachine? = activeStateMachine
+
         fun isAlwaysReadyPersisted(context: Context): Boolean {
             return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .getBoolean(KEY_ALWAYS_READY, false)
@@ -119,6 +124,7 @@ class JarvisAlwaysOnService : Service() {
             speakerManager = speakerManager,
             wakeWordEngine = wakeWordEngine
         )
+        activeStateMachine = stateMachine
 
         // Observe and bridge state machine to static StateFlows and notifications
         serviceScope.launch {
@@ -280,6 +286,7 @@ class JarvisAlwaysOnService : Service() {
     }
 
         override fun onDestroy() {
+        activeStateMachine = null
         if (wakeLock?.isHeld == true) {
             try { wakeLock?.release() } catch (e: Exception) {}
         }
