@@ -20,5 +20,8 @@ data class WakeEventEntity(
     val speakerVerified: Boolean = false,
     val recognizedCommand: String? = null,
     val responseSummary: String? = null,
-    val status: String = "COMPLETED" // "COMPLETED" | "TIMEOUT" | "REJECTED_SPEAKER" | "CANCELLED"
+    val status: String = "COMPLETED", // "COMPLETED" | "TIMEOUT" | "REJECTED_SPEAKER" | "CANCELLED"
+    val originalCommand: String? = null,
+    val translatedCommand: String? = null,
+    val detectedLanguage: String = "en"
 )

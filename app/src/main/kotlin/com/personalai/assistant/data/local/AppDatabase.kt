@@ -34,7 +34,7 @@ import com.personalai.assistant.data.local.entity.WakeEventEntity
         WakeEventEntity::class,
         ChatMessageEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -88,6 +88,18 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `transcripts` ADD COLUMN `originalText` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE `transcripts` ADD COLUMN `translatedText` TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE `transcripts` ADD COLUMN `detectedLanguage` TEXT NOT NULL DEFAULT 'en'")
+
+                db.execSQL("ALTER TABLE `wake_events` ADD COLUMN `originalCommand` TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE `wake_events` ADD COLUMN `translatedCommand` TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE `wake_events` ADD COLUMN `detectedLanguage` TEXT NOT NULL DEFAULT 'en'")
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -95,7 +107,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "personal_ai.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .build()
                     .also { INSTANCE = it }
             }

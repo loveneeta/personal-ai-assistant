@@ -110,4 +110,7 @@ dependencies {
   // On-Device Offline Speech-to-Text (Vosk Android Engine)
   implementation("com.alphacephei:vosk-android:0.3.75@aar")
   implementation("net.java.dev.jna:jna:5.14.0@aar")
+
+  // On-Device Offline Speech Translation (100% Free / On-Device)
+  implementation("com.google.mlkit:translate:17.0.3")
 }

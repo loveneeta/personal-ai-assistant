@@ -260,13 +260,13 @@ class RoomDatabaseDaoTest {
         context.deleteDatabase(dbName)
 
         val db = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3)
+            .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3, AppDatabase.MIGRATION_3_4)
             .build()
 
         val cursor = db.openHelper.readableDatabase.query("SELECT * FROM room_master_table")
         assertTrue(cursor.moveToFirst())
         val identityHash = cursor.getString(cursor.getColumnIndexOrThrow("identity_hash"))
-        assertEquals("4e52e5813dac10c914bb375936e68d0c", identityHash)
+        assertEquals("1d5137c6c65ede57e969e284e06de827", identityHash)
         cursor.close()
         db.close()
         context.deleteDatabase(dbName)
@@ -399,9 +399,9 @@ class RoomDatabaseDaoTest {
         val sqliteDb = androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory().create(helperConfig).writableDatabase
         sqliteDb.close()
 
-        // 2. Open with AppDatabase (version 3) with MIGRATION_1_2 and MIGRATION_2_3 without destructive fallback
+        // 2. Open with AppDatabase (version 4) with MIGRATION_1_2, MIGRATION_2_3, and MIGRATION_3_4 without destructive fallback
         val upgradedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3)
+            .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3, AppDatabase.MIGRATION_3_4)
             .build()
 
         val task = upgradedDb.taskDao().getById(1)
@@ -424,6 +424,28 @@ class RoomDatabaseDaoTest {
         assertTrue(chatCursor.moveToFirst())
         assertEquals(0, chatCursor.getInt(0))
         chatCursor.close()
+
+        // Verify MIGRATION_3_4 added columns to transcripts
+        val transcriptCursor = upgradedDb.openHelper.readableDatabase.query("PRAGMA table_info(transcripts)")
+        val transcriptCols = mutableListOf<String>()
+        while (transcriptCursor.moveToNext()) {
+            transcriptCols.add(transcriptCursor.getString(1))
+        }
+        transcriptCursor.close()
+        assertTrue(transcriptCols.contains("originalText"))
+        assertTrue(transcriptCols.contains("translatedText"))
+        assertTrue(transcriptCols.contains("detectedLanguage"))
+
+        // Verify MIGRATION_3_4 added columns to wake_events
+        val wakeColsCursor = upgradedDb.openHelper.readableDatabase.query("PRAGMA table_info(wake_events)")
+        val wakeCols = mutableListOf<String>()
+        while (wakeColsCursor.moveToNext()) {
+            wakeCols.add(wakeColsCursor.getString(1))
+        }
+        wakeColsCursor.close()
+        assertTrue(wakeCols.contains("originalCommand"))
+        assertTrue(wakeCols.contains("translatedCommand"))
+        assertTrue(wakeCols.contains("detectedLanguage"))
 
         upgradedDb.close()
         context.deleteDatabase(dbName)

@@ -30,5 +30,8 @@ data class TranscriptEntity(
     val text: String,
     val language: String = "en",
     val confidence: Float? = null,
-    val reviewStatus: String = "AUTOMATIC" // "AUTOMATIC", "NEEDS_REVIEW", "VERIFIED"
+    val reviewStatus: String = "AUTOMATIC", // "AUTOMATIC", "NEEDS_REVIEW", "VERIFIED"
+    val originalText: String = "",
+    val translatedText: String? = null,
+    val detectedLanguage: String = "en"
 )

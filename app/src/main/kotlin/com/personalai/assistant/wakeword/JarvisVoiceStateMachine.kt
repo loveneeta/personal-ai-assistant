@@ -27,6 +27,7 @@ import com.personalai.assistant.transcription.MultilingualOfflineAsrEngine
 import com.personalai.assistant.transcription.SentenceReconstructor
 import com.personalai.assistant.transcription.models.ModelManager
 import com.personalai.assistant.transcription.models.TranscriptionLanguageMode
+import com.personalai.assistant.translation.TranslationEngine
 import org.json.JSONObject
 import org.vosk.Model
 import org.vosk.Recognizer
@@ -594,29 +595,71 @@ class JarvisVoiceStateMachine(
             val lower = spokenText.lowercase().trim()
             if (lower == "stop listening" || lower == "jarvis stop listening" || lower == "cancel") {
                 speakResponse("Hands-free listening stopped, sir.")
-                logWakeEvent(configuredWakeWord, true, spokenText, "Listening stopped", "CANCELLED")
+                logWakeEvent(
+                    wakeWord = configuredWakeWord,
+                    verified = true,
+                    command = spokenText,
+                    response = "Listening stopped",
+                    status = "CANCELLED",
+                    originalCommand = spokenText,
+                    translatedCommand = spokenText,
+                    detectedLanguage = "en"
+                )
                 stopHandsFree()
                 return@launch
             }
 
+            // Sprint 2: Multilingual Translation Layer (Hinglish/Hindi -> English)
+            val translationResult = TranslationEngine.getInstance(context).translateToEnglish(spokenText)
+            val commandToExecute = translationResult.translatedText
+            val detectedLanguage = translationResult.detectedLanguage
+            Log.i(TAG, "Multilingual translation: original='$spokenText', lang=$detectedLanguage, english='$commandToExecute'")
+
             // 1. Route through Master Jarvis Agent (WhatsApp, SMS, Phone, Gmail, Calendar, Device)
             val masterAgent = MasterJarvisAgent.getInstance(context)
-            when (val result = masterAgent.executeCommand(spokenText)) {
+            when (val result = masterAgent.executeCommand(commandToExecute)) {
                 is AgentExecutionResult.Immediate -> {
                     _lastAssistantResponse.value = result.feedback
-                    logWakeEvent(configuredWakeWord, true, spokenText, result.feedback, "COMPLETED")
+                    logWakeEvent(
+                        wakeWord = configuredWakeWord,
+                        verified = true,
+                        command = commandToExecute,
+                        response = result.feedback,
+                        status = "COMPLETED",
+                        originalCommand = spokenText,
+                        translatedCommand = commandToExecute,
+                        detectedLanguage = detectedLanguage
+                    )
                     speakResponse(result.feedback)
                     return@launch
                 }
                 is AgentExecutionResult.StagedForApproval -> {
                     _lastAssistantResponse.value = result.message
-                    logWakeEvent(configuredWakeWord, true, spokenText, result.message, "STAGED")
+                    logWakeEvent(
+                        wakeWord = configuredWakeWord,
+                        verified = true,
+                        command = commandToExecute,
+                        response = result.message,
+                        status = "STAGED",
+                        originalCommand = spokenText,
+                        translatedCommand = commandToExecute,
+                        detectedLanguage = detectedLanguage
+                    )
                     speakResponse(result.message)
                     return@launch
                 }
                 is AgentExecutionResult.Handled -> {
                     _lastAssistantResponse.value = result.feedback
-                    logWakeEvent(configuredWakeWord, true, spokenText, result.feedback, "COMPLETED")
+                    logWakeEvent(
+                        wakeWord = configuredWakeWord,
+                        verified = true,
+                        command = commandToExecute,
+                        response = result.feedback,
+                        status = "COMPLETED",
+                        originalCommand = spokenText,
+                        translatedCommand = commandToExecute,
+                        detectedLanguage = detectedLanguage
+                    )
                     speakResponse(result.feedback)
                     return@launch
                 }
@@ -627,7 +670,7 @@ class JarvisVoiceStateMachine(
 
             // 2. Evaluate native Android Actions (Apps, Settings, Alarms, Timers)
             val actionStart = SystemClock.elapsedRealtime()
-            val parsedAction = actionExecutor.parseAction(spokenText)
+            val parsedAction = actionExecutor.parseAction(commandToExecute)
             if (parsedAction !is AssistantAction.None) {
                 val actionResult = actionExecutor.execute(parsedAction)
                 val actionDuration = SystemClock.elapsedRealtime() - actionStart
@@ -637,25 +680,31 @@ class JarvisVoiceStateMachine(
                 logWakeEvent(
                     wakeWord = configuredWakeWord,
                     verified = speakerManager.isSpeakerVerificationEnabled.value,
-                    command = spokenText,
+                    command = commandToExecute,
                     response = actionResult.spokenFeedback,
-                    status = if (actionResult.handled) "COMPLETED" else "FAILED"
+                    status = if (actionResult.handled) "COMPLETED" else "FAILED",
+                    originalCommand = spokenText,
+                    translatedCommand = commandToExecute,
+                    detectedLanguage = detectedLanguage
                 )
                 speakResponse(actionResult.spokenFeedback)
                 return@launch
             }
 
             // Fallback: Query Local RAG Chat Engine & Personal Memory
-            val chatResponse: ChatMessage = ragEngine.answerQuery(spokenText)
+            val chatResponse: ChatMessage = ragEngine.answerQuery(commandToExecute, context)
             _lastAssistantResponse.value = chatResponse.content
 
             // Log event to database
             logWakeEvent(
                 wakeWord = configuredWakeWord,
                 verified = speakerManager.isSpeakerVerificationEnabled.value,
-                command = spokenText,
+                command = commandToExecute,
                 response = chatResponse.content,
-                status = "COMPLETED"
+                status = "COMPLETED",
+                originalCommand = spokenText,
+                translatedCommand = commandToExecute,
+                detectedLanguage = detectedLanguage
             )
 
             // Speak out answer
@@ -668,24 +717,57 @@ class JarvisVoiceStateMachine(
         scope.launch {
             transitionTo(JarvisAudioState.PROCESSING)
 
+            // Sprint 2: Multilingual Translation Layer (Hinglish/Hindi -> English)
+            val translationResult = TranslationEngine.getInstance(context).translateToEnglish(command)
+            val commandToExecute = translationResult.translatedText
+            val detectedLanguage = translationResult.detectedLanguage
+            Log.i(TAG, "Direct command: original='$command', lang=$detectedLanguage, english='$commandToExecute'")
+
             // 1. Route through Master Jarvis Agent (WhatsApp, SMS, Phone, Calendar, Device)
             val masterAgent = MasterJarvisAgent.getInstance(context)
-            when (val result = masterAgent.executeCommand(command)) {
+            when (val result = masterAgent.executeCommand(commandToExecute)) {
                 is AgentExecutionResult.Immediate -> {
                     _lastAssistantResponse.value = result.feedback
-                    logWakeEvent(configuredWakeWord, true, command, result.feedback, "COMPLETED")
+                    logWakeEvent(
+                        wakeWord = configuredWakeWord,
+                        verified = true,
+                        command = commandToExecute,
+                        response = result.feedback,
+                        status = "COMPLETED",
+                        originalCommand = command,
+                        translatedCommand = commandToExecute,
+                        detectedLanguage = detectedLanguage
+                    )
                     speakResponse(result.feedback)
                     return@launch
                 }
                 is AgentExecutionResult.StagedForApproval -> {
                     _lastAssistantResponse.value = result.message
-                    logWakeEvent(configuredWakeWord, true, command, result.message, "STAGED")
+                    logWakeEvent(
+                        wakeWord = configuredWakeWord,
+                        verified = true,
+                        command = commandToExecute,
+                        response = result.message,
+                        status = "STAGED",
+                        originalCommand = command,
+                        translatedCommand = commandToExecute,
+                        detectedLanguage = detectedLanguage
+                    )
                     speakResponse(result.message)
                     return@launch
                 }
                 is AgentExecutionResult.Handled -> {
                     _lastAssistantResponse.value = result.feedback
-                    logWakeEvent(configuredWakeWord, true, command, result.feedback, "COMPLETED")
+                    logWakeEvent(
+                        wakeWord = configuredWakeWord,
+                        verified = true,
+                        command = commandToExecute,
+                        response = result.feedback,
+                        status = "COMPLETED",
+                        originalCommand = command,
+                        translatedCommand = commandToExecute,
+                        detectedLanguage = detectedLanguage
+                    )
                     speakResponse(result.feedback)
                     return@launch
                 }
@@ -694,18 +776,36 @@ class JarvisVoiceStateMachine(
                 }
             }
 
-            val parsedAction = actionExecutor.parseAction(command)
+            val parsedAction = actionExecutor.parseAction(commandToExecute)
             if (parsedAction !is AssistantAction.None) {
                 val actionResult = actionExecutor.execute(parsedAction)
                 _lastAssistantResponse.value = actionResult.spokenFeedback
-                logWakeEvent(configuredWakeWord, true, command, actionResult.spokenFeedback, if (actionResult.handled) "COMPLETED" else "FAILED")
+                logWakeEvent(
+                    wakeWord = configuredWakeWord,
+                    verified = true,
+                    command = commandToExecute,
+                    response = actionResult.spokenFeedback,
+                    status = if (actionResult.handled) "COMPLETED" else "FAILED",
+                    originalCommand = command,
+                    translatedCommand = commandToExecute,
+                    detectedLanguage = detectedLanguage
+                )
                 speakResponse(actionResult.spokenFeedback)
                 return@launch
             }
 
-            val chatResponse = ragEngine.answerQuery(command, context)
+            val chatResponse = ragEngine.answerQuery(commandToExecute, context)
             _lastAssistantResponse.value = chatResponse.content
-            logWakeEvent(configuredWakeWord, true, command, chatResponse.content, "COMPLETED")
+            logWakeEvent(
+                wakeWord = configuredWakeWord,
+                verified = true,
+                command = commandToExecute,
+                response = chatResponse.content,
+                status = "COMPLETED",
+                originalCommand = command,
+                translatedCommand = commandToExecute,
+                detectedLanguage = detectedLanguage
+            )
             speakResponse(chatResponse.content)
         }
     }
@@ -820,7 +920,10 @@ class JarvisVoiceStateMachine(
         verified: Boolean,
         command: String?,
         response: String?,
-        status: String
+        status: String,
+        originalCommand: String? = null,
+        translatedCommand: String? = null,
+        detectedLanguage: String = "en"
     ) {
         val event = WakeEventEntity(
             timestamp = System.currentTimeMillis(),
@@ -829,7 +932,10 @@ class JarvisVoiceStateMachine(
             speakerVerified = verified,
             recognizedCommand = command,
             responseSummary = response?.take(150),
-            status = status
+            status = status,
+            originalCommand = originalCommand ?: command,
+            translatedCommand = translatedCommand ?: command,
+            detectedLanguage = detectedLanguage
         )
         try {
             val id = repository.insertWakeEvent(event)
