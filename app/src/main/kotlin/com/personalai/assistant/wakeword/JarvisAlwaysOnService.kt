@@ -136,7 +136,7 @@ class JarvisAlwaysOnService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val action = intent?.action ?: ACTION_START
+        val action = intent?.action ?: if (isAlwaysReadyPersisted(this)) ACTION_START else ACTION_STOP
         when (action) {
             ACTION_START -> {
                 if (wakeLock?.isHeld == false) {
@@ -145,6 +145,17 @@ class JarvisAlwaysOnService : Service() {
                 startForegroundWithNotification()
                 stateMachine.startHandsFree()
                 _isWakeModelReady.value = stateMachine.isWakeModelReady
+
+                // If offline wake model is not yet unpacked, provision default model in background
+                if (!stateMachine.isWakeModelReady) {
+                    com.personalai.assistant.transcription.models.ModelManager.getInstance(this)
+                        .ensureDefaultModelProvisioned(serviceScope) { ready ->
+                            if (ready && isAlwaysReadyPersisted(this@JarvisAlwaysOnService)) {
+                                stateMachine.startHandsFree()
+                                _isWakeModelReady.value = stateMachine.isWakeModelReady
+                            }
+                        }
+                }
             }
             ACTION_PAUSE -> {
                 if (wakeLock?.isHeld == true) {
@@ -167,7 +178,7 @@ class JarvisAlwaysOnService : Service() {
                 stopSelf()
             }
         }
-        return START_NOT_STICKY
+        return START_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

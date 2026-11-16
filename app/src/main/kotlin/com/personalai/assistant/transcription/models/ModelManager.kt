@@ -2,12 +2,14 @@ package com.personalai.assistant.transcription.models
 
 import android.content.Context
 import android.content.SharedPreferences
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
 import java.io.File
@@ -98,6 +100,34 @@ class ModelManager internal constructor(
 
     fun getActiveModelDirectory(): File? {
         return getModelDirectory(_activeModelId.value)
+    }
+
+    /**
+     * Non-blocking background provisioning for the default Indian English speech model
+     * so wake-word and offline ASR are ready out-of-the-box without requiring manual Settings navigation.
+     */
+    fun ensureDefaultModelProvisioned(scope: CoroutineScope, onComplete: ((Boolean) -> Unit)? = null) {
+        if (getActiveModelDirectory() != null) {
+            onComplete?.invoke(true)
+            return
+        }
+        scope.launch(Dispatchers.IO) {
+            try {
+                val targetId = AvailableModels.INDIAN_ENGLISH.id
+                val result = installModel(targetId) {}
+                val success = result is ModelInstallResult.Success
+                if (success) {
+                    setActiveModel(targetId)
+                }
+                withContext(Dispatchers.Main) {
+                    onComplete?.invoke(success)
+                }
+            } catch (_: Exception) {
+                withContext(Dispatchers.Main) {
+                    onComplete?.invoke(false)
+                }
+            }
+        }
     }
 
     /**

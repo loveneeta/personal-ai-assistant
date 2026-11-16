@@ -264,25 +264,29 @@ class JarvisVoiceStateMachine(
     @VisibleForTesting
     internal fun handleTtsCompletion(utteranceId: String?, skipDelay: Boolean = false): Job? {
         val currentId = currentTtsSessionId.get()
-        val expectedId = "JARVIS_RESPONSE_$currentId"
-        if (utteranceId != expectedId) {
-            Log.d(TAG, "Rejecting stale TTS callback: received '$utteranceId', expected '$expectedId'")
+        val isResponse = utteranceId == "JARVIS_RESPONSE_$currentId"
+        val isWakeAck = utteranceId == "JARVIS_WAKE_ACK_$currentId"
+
+        if (!isResponse && !isWakeAck) {
+            Log.d(TAG, "Rejecting stale TTS callback: received '$utteranceId', expected ID with session $currentId")
             return null
         }
 
         return scope.launch {
             if (!skipDelay) {
-                delay(400) // Grace period to avoid self-speech echo
+                delay(if (isWakeAck) 80 else 400) // Grace period to avoid self-speech echo
             }
             synchronized(this@JarvisVoiceStateMachine) {
-                if (utteranceId == "JARVIS_RESPONSE_${currentTtsSessionId.get()}" &&
-                    isDesiredListening.get() &&
-                    _currentState.value == JarvisAudioState.SPEAKING
-                ) {
-                    if (isAudioCapturing.get()) {
-                        transitionTo(JarvisAudioState.WAKE_LISTENING)
+                if (isDesiredListening.get() && _currentState.value == JarvisAudioState.SPEAKING) {
+                    if (isWakeAck) {
+                        transitionTo(JarvisAudioState.COMMAND_LISTENING)
+                        startCommandTimeout()
                     } else {
-                        startAudioLoop()
+                        if (isAudioCapturing.get()) {
+                            transitionTo(JarvisAudioState.WAKE_LISTENING)
+                        } else {
+                            startAudioLoop()
+                        }
                     }
                 } else {
                     Log.d(TAG, "Ignoring TTS completion: desiredListening=${isDesiredListening.get()}, state=${_currentState.value}")
@@ -539,9 +543,8 @@ class JarvisVoiceStateMachine(
                 }
             }
 
-            // Move to Command Listening
-            transitionTo(JarvisAudioState.COMMAND_LISTENING)
-            startCommandTimeout()
+            // Speak natural acknowledgment: "Yes, what can I help you with?"
+            speakWakeAcknowledgment()
         }
     }
 
@@ -704,6 +707,17 @@ class JarvisVoiceStateMachine(
             _lastAssistantResponse.value = chatResponse.content
             logWakeEvent(configuredWakeWord, true, command, chatResponse.content, "COMPLETED")
             speakResponse(chatResponse.content)
+        }
+    }
+
+    private fun speakWakeAcknowledgment() {
+        val sessionId = currentTtsSessionId.incrementAndGet()
+        val utteranceId = "JARVIS_WAKE_ACK_$sessionId"
+        transitionTo(JarvisAudioState.SPEAKING)
+        isTtsSpeaking.set(true)
+        JarvisTtsEngine.getInstance(context).speak("Yes, what can I help you with?") {
+            isTtsSpeaking.set(false)
+            handleTtsCompletion(utteranceId)
         }
     }
 

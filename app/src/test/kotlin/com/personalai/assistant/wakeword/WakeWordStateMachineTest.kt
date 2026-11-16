@@ -247,6 +247,19 @@ class WakeWordStateMachineTest {
     }
 
     @Test
+    fun testWakeAckTtsCompletion_transitionsToCommandListening() {
+        val sessionId = stateMachine.simulateSpeakingState(200L)
+        assertEquals(JarvisAudioState.SPEAKING, stateMachine.currentState.value)
+
+        // Wake acknowledgment finishes speaking
+        val job = stateMachine.handleTtsCompletion("JARVIS_WAKE_ACK_200", skipDelay = true)
+        runBlocking { job?.join() }
+
+        // Must transition to COMMAND_LISTENING to capture user instruction
+        assertEquals(JarvisAudioState.COMMAND_LISTENING, stateMachine.currentState.value)
+    }
+
+    @Test
     fun testSpeakerEnrollment_threePassFlow() {
         speakerManager.startEnrollment()
         assertFalse(speakerManager.isEnrolled.value)
