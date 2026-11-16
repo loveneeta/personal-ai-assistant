@@ -61,7 +61,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.personalai.assistant.ai.ChatMessage
 import com.personalai.assistant.ai.Citation
 import com.personalai.assistant.ui.components.JarvisGlassCard
-import com.personalai.assistant.ui.components.JarvisStatusBadge
 import com.personalai.assistant.ui.theme.JarvisBorderCyan
 import com.personalai.assistant.ui.theme.JarvisBorderViolet
 import com.personalai.assistant.ui.theme.JarvisCosmicBlack
@@ -147,19 +146,14 @@ fun ChatScreen(
                                 letterSpacing = 1.5.sp
                             )
                             Text(
-                                "NEURAL KNOWLEDGE QUERY",
+                                if (isOpenJarvisActive) "OPENJARVIS // HYBRID LLM" else "100% ON-DEVICE // NEURAL RAG",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = JarvisCyan,
+                                color = if (isOpenJarvisActive) JarvisCyan else JarvisCyan.copy(alpha = 0.75f),
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = 9.sp,
-                                letterSpacing = 1.sp
+                                letterSpacing = 0.8.sp
                             )
                         }
-                        Spacer(modifier = Modifier.width(4.dp))
-                        JarvisStatusBadge(
-                            label = if (isOpenJarvisActive) "OPENJARVIS ONLINE" else "OFFLINE RAG",
-                            isPulsing = true
-                        )
                     }
                 },
                 navigationIcon = {

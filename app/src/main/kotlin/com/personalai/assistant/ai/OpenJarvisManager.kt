@@ -148,8 +148,8 @@ object OpenJarvisManager {
             val url = URL("$baseUrl/v1/chat/completions")
             val connection = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
-                connectTimeout = 15000
-                readTimeout = 45000
+                connectTimeout = 2500
+                readTimeout = 10000
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
                 setRequestProperty("Accept", "application/json")

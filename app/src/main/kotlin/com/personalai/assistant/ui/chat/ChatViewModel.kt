@@ -150,10 +150,9 @@ class ChatViewModel(
                         replyContent = result.getOrThrow()
                         repository.saveChatMessage(isUser = false, content = replyContent)
                     } else {
-                        // Fall back to local RAG if OpenJarvis is offline/unreachable
+                        // Fall back cleanly to local on-device RAG without leaking raw socket errors
                         val offlineFallback = chatEngine.answerQuery(trimmed)
-                        val note = "*(OpenJarvis offline: ${result.exceptionOrNull()?.message ?: "unreachable"}, switched to on-device RAG)*\n\n"
-                        replyContent = note + offlineFallback.content
+                        replyContent = offlineFallback.content
                         repository.saveChatMessage(isUser = false, content = replyContent)
                     }
                 } else {
